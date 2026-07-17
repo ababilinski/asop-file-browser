@@ -1,0 +1,310 @@
+name: Prepare release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_run:
+    workflows:
+      - Publish release
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Update release pull request
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Choose the next action
+        id: route
+        run: |
+          TRACKED_VERSION="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$TRACKED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a three-part version." >&2
+            exit 1
+          fi
+
+          LATEST_TAG="$(
+            git tag --merged HEAD --list '[0-9]*' --sort=-v:refname |
+              while IFS= read -r tag; do
+                if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                  echo "$tag"
+                  break
+                fi
+              done
+          )"
+          if [[ -z "$LATEST_TAG" ]]; then
+            if [[ "$TRACKED_VERSION" != "1.0.0" || "$(git rev-list --count HEAD)" != "1" ]]; then
+              echo "A repository without a release tag must contain one 1.0.0 root commit." >&2
+              exit 1
+            fi
+            {
+              echo "mode=initial"
+              echo "tracked_version=$TRACKED_VERSION"
+              echo "latest_tag="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LATEST_VERSION="$LATEST_TAG"
+
+          MODE="$(python3 - "$TRACKED_VERSION" "$LATEST_VERSION" <<'PY'
+          import sys
+
+          tracked = tuple(map(int, sys.argv[1].split(".")))
+          latest = tuple(map(int, sys.argv[2].split(".")))
+          if tracked < latest:
+              raise SystemExit(
+                  f"VERSION {sys.argv[1]} is older than the latest tag {sys.argv[2]}."
+              )
+          print("publish" if tracked > latest else "prepare")
+          PY
+          )"
+
+          {
+            echo "mode=$MODE"
+            echo "tracked_version=$TRACKED_VERSION"
+            echo "latest_tag=$LATEST_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start the signed release
+        if: ${{ steps.route.outputs.mode == 'publish' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.route.outputs.latest_tag }}
+          TRACKED_VERSION: ${{ steps.route.outputs.tracked_version }}
+        run: |
+          ACTIVE_RELEASES="$(
+            gh run list \
+              --workflow release.yml \
+              --limit 20 \
+              --json status \
+              --jq '[.[] | select(.status != "completed")] | length'
+          )"
+          if [[ "$ACTIVE_RELEASES" -gt 0 ]]; then
+            echo "A release workflow is already queued or running."
+            exit 0
+          fi
+
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          python3 scripts/release_metadata.py version-transition \
+            --from-ref "$LATEST_TAG" \
+            --head "$RELEASE_SHA" \
+            --version "$TRACKED_VERSION" \
+            >/dev/null
+          BUILD_NUMBER="$(git rev-list --count "$RELEASE_SHA")"
+          gh workflow run release.yml \
+            --ref main \
+            -f "version=$TRACKED_VERSION" \
+            -f "build=$BUILD_NUMBER" \
+            -f "commit=$RELEASE_SHA" \
+            -f prerelease=false
+
+      - name: Collect merged pull requests
+        if: ${{ steps.route.outputs.mode == 'prepare' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.route.outputs.latest_tag }}
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPOSITORY_NAME="${GITHUB_REPOSITORY#*/}"
+          : > "$RUNNER_TEMP/associated-prs.jsonl"
+          git rev-list --reverse "$LATEST_TAG..HEAD" > "$RUNNER_TEMP/release-commits.txt"
+
+          while IFS= read -r commit; do
+            COMMIT_PULL_REQUESTS="$RUNNER_TEMP/commit-pull-requests.json"
+            gh api graphql \
+              -F "owner=$OWNER" \
+              -F "name=$REPOSITORY_NAME" \
+              -F "oid=$commit" \
+              -f query='query($owner:String!,$name:String!,$oid:GitObjectID!){
+                repository(owner:$owner,name:$name){
+                  object(oid:$oid){
+                    ... on Commit{
+                      associatedPullRequests(first:100){
+                        nodes{
+                          number
+                          title
+                          mergedAt
+                          url
+                          headRefName
+                          baseRefName
+                          mergeCommit{oid}
+                          labels(first:100){nodes{name}}
+                        }
+                        pageInfo{hasNextPage}
+                      }
+                    }
+                  }
+                }
+              }' > "$COMMIT_PULL_REQUESTS"
+
+            if jq -e \
+              '.data.repository.object.associatedPullRequests.pageInfo.hasNextPage == true' \
+              "$COMMIT_PULL_REQUESTS" >/dev/null; then
+              echo "Commit $commit is associated with more than 100 pull requests." >&2
+              exit 1
+            fi
+
+            jq -c '
+              .data.repository.object.associatedPullRequests.nodes[]?
+              | select(.mergedAt != null and .baseRefName == "main")
+              | {
+                  number,
+                  title,
+                  mergedAt,
+                  labels: [.labels.nodes[]? | {name}],
+                  url,
+                  headRefName,
+                  mergeCommit: .mergeCommit.oid
+                }
+            ' "$COMMIT_PULL_REQUESTS" >> "$RUNNER_TEMP/associated-prs.jsonl"
+          done < "$RUNNER_TEMP/release-commits.txt"
+
+          if [[ -s "$RUNNER_TEMP/associated-prs.jsonl" ]]; then
+            jq -s 'unique_by(.number)' \
+              "$RUNNER_TEMP/associated-prs.jsonl" \
+              > "$RUNNER_TEMP/candidate-prs.json"
+            : > "$RUNNER_TEMP/verified-prs.jsonl"
+            while IFS= read -r pull_request; do
+              merge_commit="$(jq -r '.mergeCommit // empty' <<< "$pull_request")"
+              if [[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] &&
+                 git cat-file -e "$merge_commit^{commit}" 2>/dev/null &&
+                 git merge-base --is-ancestor "$merge_commit" HEAD &&
+                 ! git merge-base --is-ancestor "$merge_commit" "$LATEST_TAG"; then
+                jq -c 'del(.mergeCommit)' <<< "$pull_request" \
+                  >> "$RUNNER_TEMP/verified-prs.jsonl"
+              fi
+            done < <(jq -c '.[]' "$RUNNER_TEMP/candidate-prs.json")
+            jq -s '.' \
+              "$RUNNER_TEMP/verified-prs.jsonl" \
+              > "$RUNNER_TEMP/merged-prs.json"
+          else
+            echo '[]' > "$RUNNER_TEMP/merged-prs.json"
+          fi
+
+      - name: Build changelog and version update
+        if: ${{ steps.route.outputs.mode == 'prepare' }}
+        id: metadata
+        env:
+          CURRENT_VERSION: ${{ steps.route.outputs.tracked_version }}
+        run: |
+          python3 scripts/release_metadata.py prepare \
+            --prs-json "$RUNNER_TEMP/merged-prs.json" \
+            --current-version "$CURRENT_VERSION" \
+            --release-date "$(date -u +%Y-%m-%d)" \
+            --changelog CHANGELOG.md \
+            --version-file VERSION \
+            --summary "$RUNNER_TEMP/release-summary.md" \
+            --github-output "$GITHUB_OUTPUT" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Update the release branch
+        if: ${{ steps.metadata.outputs.has_release == 'true' }}
+        env:
+          NEXT_VERSION: ${{ steps.metadata.outputs.next_version }}
+        run: |
+          REMOTE_SHA="$(git ls-remote --heads origin refs/heads/release/next | awk '{print $1}')"
+          git switch --create release/next
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md VERSION
+          git commit -m "Prepare release $NEXT_VERSION"
+
+          if [[ -n "$REMOTE_SHA" ]]; then
+            git push origin HEAD:refs/heads/release/next \
+              --force-with-lease="refs/heads/release/next:$REMOTE_SHA"
+          else
+            git push origin HEAD:refs/heads/release/next \
+              --force-with-lease=refs/heads/release/next:
+          fi
+
+      - name: Open or update the release pull request
+        if: ${{ steps.metadata.outputs.has_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_VERSION: ${{ steps.metadata.outputs.next_version }}
+        run: |
+          PR_NUMBER="$(
+            gh pr list \
+              --state open \
+              --base main \
+              --head release/next \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            if ! gh pr create \
+                --base main \
+                --head release/next \
+                --title "Release $NEXT_VERSION" \
+                --body-file "$RUNNER_TEMP/release-summary.md" \
+                --label release:none \
+                --draft; then
+              COMPARE_URL="https://github.com/$GITHUB_REPOSITORY/compare/main...release/next?expand=1"
+              echo "::warning::GitHub did not allow Actions to create the release pull request."
+              {
+                echo "## Release $NEXT_VERSION is ready"
+                echo
+                echo "GitHub did not allow this workflow to create the pull request."
+                echo "[Open the release pull request]($COMPARE_URL), then add \`release:none\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            PR_NUMBER="$(
+              gh pr list \
+                --state open \
+                --base main \
+                --head release/next \
+                --json number \
+                --jq '.[0].number'
+            )"
+          else
+            gh pr edit "$PR_NUMBER" \
+              --title "Release $NEXT_VERSION" \
+              --body-file "$RUNNER_TEMP/release-summary.md"
+          fi
+
+          for label in release:major release:minor release:patch; do
+            if gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -Fxq "$label"; then
+              gh pr edit "$PR_NUMBER" --remove-label "$label"
+            fi
+          done
+          gh pr edit "$PR_NUMBER" --add-label release:none
+
+          # Bot-created pull-request runs can wait for approval. Dispatch validation
+          # explicitly so branch protection receives a fresh trusted check immediately.
+          gh workflow run ci.yml \
+            --ref release/next \
+            -f "pull_request_number=$PR_NUMBER"
+
+      - name: Report no pending release changes
+        if: >-
+          steps.route.outputs.mode == 'prepare' &&
+          steps.metadata.outputs.has_release == 'false'
+        run: echo "No merged pull requests require a release."
+
+      - name: Report initial release readiness
+        if: ${{ steps.route.outputs.mode == 'initial' }}
+        run: echo "The root commit is ready for the manual 1.0.0 release workflow."

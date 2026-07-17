@@ -1,0 +1,48 @@
+name: Validate third-party metadata
+
+on:
+  push:
+    paths:
+      - "README.md"
+      - "TOOLS.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "ThirdPartyLicenses/**"
+      - "docs/**"
+      - "Sources/AndroidFileBrowserCore/ToolchainManager.swift"
+      - "Tests/AndroidFileBrowserCoreTests/ToolchainManagerTests.swift"
+      - "scripts/package-app.sh"
+      - "scripts/audit-third-party-upstream.py"
+      - "scripts/validate-third-party-metadata.py"
+      - ".github/workflows/third-party-audit.yml"
+      - ".github/workflows/third-party-metadata.yml"
+  pull_request:
+    paths:
+      - "README.md"
+      - "TOOLS.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "ThirdPartyLicenses/**"
+      - "docs/**"
+      - "Sources/AndroidFileBrowserCore/ToolchainManager.swift"
+      - "Tests/AndroidFileBrowserCoreTests/ToolchainManagerTests.swift"
+      - "scripts/package-app.sh"
+      - "scripts/audit-third-party-upstream.py"
+      - "scripts/validate-third-party-metadata.py"
+      - ".github/workflows/third-party-audit.yml"
+      - ".github/workflows/third-party-metadata.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Validate versions, notices, and website attribution
+        run: python3 scripts/validate-third-party-metadata.py
+
+      - name: Check audit script syntax
+        run: python3 -m py_compile scripts/audit-third-party-upstream.py

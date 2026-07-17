@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-07-11",
+  "website": {
+    "copyrightHolder": "Adrian Babilinski",
+    "copyrightStartYear": 2026
+  },
+  "upstream": {
+    "scrcpyLatestReleaseAPI": "https://api.github.com/repos/Genymobile/scrcpy/releases/latest",
+    "scrcpyReleaseByTagAPI": "https://api.github.com/repos/Genymobile/scrcpy/releases/tags/{tag}",
+    "scrcpyLicenseByTag": "https://raw.githubusercontent.com/Genymobile/scrcpy/{tag}/LICENSE",
+    "androidSDKRepository": "https://dl.google.com/android/repository/repository2-1.xml",
+    "platformToolsReleaseNotes": "https://developer.android.com/tools/releases/platform-tools",
+    "platformToolsChannel": "stable"
+  },
+  "managedToolchain": {
+    "scrcpy": {
+      "version": "4.0",
+      "tag": "v4.0",
+      "releaseURL": "https://github.com/Genymobile/scrcpy/releases/tag/v4.0",
+      "sourceURL": "https://github.com/Genymobile/scrcpy",
+      "licenseFile": "ThirdPartyLicenses/scrcpy-4.0-LICENSE.txt",
+      "licenseSHA256": "94a6c1cf7fbd8ea80542192d4a7ea6aea5859284c2a4873d396e1060718fa251",
+      "upstreamLicenseSHA256": "01c12035bf35af37241298dc7ad538eb2a07e5c940437bc6876feeaa9d1951d0",
+      "versionMarker": "scrcpy 4.0",
+      "serverSHA256": "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a"
+    },
+    "adb": {
+      "version": "37.0.0",
+      "buildMarker": "37.0.0-14910828",
+      "executableSHA256": "9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8dc7",
+      "noticeFile": "ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt",
+      "noticeSHA256": "f74735e1636534c2165b51815c4de870a2a06c24d8fe3e8c91149c841b81d33e",
+      "sourcePropertiesSHA256": "fbd87c8567afbc6dc78e140097fcde234f4a61fa7065e85081d43e442ccd3d24",
+      "recordFile": "ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0.md",
+      "sourceURL": "https://android.googlesource.com/platform/packages/modules/adb/"
+    },
+    "archives": [
+      {
+        "architecture": "aarch64",
+        "assetName": "scrcpy-macos-aarch64-v4.0.tar.gz",
+        "directoryName": "scrcpy-macos-aarch64-v4.0",
+        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-aarch64-v4.0.tar.gz",
+        "archiveSHA256": "f5167fe047fe4a2ae2c2ea8634c7145a4d64d0b6005f24bb45639a965b8c60d4",
+        "scrcpyExecutableSHA256": "38895166923325d6c1f9d1ba782230e0a5743e9ff7e0b13f319174409bd57b0a"
+      },
+      {
+        "architecture": "x86_64",
+        "assetName": "scrcpy-macos-x86_64-v4.0.tar.gz",
+        "directoryName": "scrcpy-macos-x86_64-v4.0",
+        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-x86_64-v4.0.tar.gz",
+        "archiveSHA256": "b83169f856d7022ed0e4428d98acea18dde2d63f49611b52ea137577ce4efe6b",
+        "scrcpyExecutableSHA256": "7e82056a6dbf1eebc0fadf9715f285c041fa90ea197b15d91db535b2c3af27bd"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+.build/
+.DS_Store
+DerivedData/
+dist/
+*.xcuserdata/
+*.xcuserstate
+__pycache__/
+*.py[cod]
+
+# Local release credentials
+*.p12
+*.p8
+*.pem
+*.key
+*.mobileprovision
+pass

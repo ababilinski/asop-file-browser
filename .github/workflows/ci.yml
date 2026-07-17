@@ -1,0 +1,272 @@
+name: Pull request validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+      - ready_for_review
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Optional pull request whose release label should be checked
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pull-request-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Validate GitHub Actions workflows
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          ARCHIVE="$RUNNER_TEMP/actionlint.tar.gz"
+          curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --fail \
+            --location \
+            --show-error \
+            --silent \
+            "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$ARCHIVE"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$ARCHIVE" | sha256sum --check --strict -
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" \
+            -shellcheck= \
+            -pyflakes= \
+            .github/workflows/*.yml
+
+  release-label:
+    name: Release label
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && inputs.pull_request_number != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check labels from the pull request event
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: python3 scripts/release_metadata.py validate-labels --labels-json "$LABELS_JSON"
+
+      - name: Check labels for a dispatched pull request
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+        run: |
+          LABELS_JSON="$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name]')"
+          python3 scripts/release_metadata.py validate-labels --labels-json "$LABELS_JSON"
+
+  tests:
+    name: Tests (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple silicon
+            runner: macos-15
+          - name: Intel
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build the app target
+        run: swift build -c release --product AndroidFileBrowser
+
+      - name: Run app tests
+        run: swift test -c release
+
+      - name: Run safe MTPKit tests
+        run: >-
+          swift test -c release
+          --package-path Vendor/MTPKit
+          --filter 'ADBParserTests|MTPCodecTests|MockTransportTests|USBDiagnosticsTests'
+
+  artifact:
+    name: Release artifact
+    needs:
+      - tests
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Validate scripts and third-party metadata
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA" -- . ':(exclude)ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt'
+          elif [[ "$EVENT_NAME" == "merge_group" && -n "$MERGE_BASE_SHA" ]]; then
+            git diff --check "$MERGE_BASE_SHA...$GITHUB_SHA" -- . ':(exclude)ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt'
+          elif [[ "$EVENT_NAME" == "push" && "$PUSH_BEFORE_SHA" =~ [^0] ]] && git cat-file -e "$PUSH_BEFORE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$PUSH_BEFORE_SHA..$GITHUB_SHA" -- . ':(exclude)ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt'
+          else
+            git diff-tree --check --root -r -m "$GITHUB_SHA" -- . ':(exclude)ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt'
+          fi
+          find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done
+          python3 -m py_compile scripts/*.py
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 scripts/validate-third-party-metadata.py
+
+      - name: Build the universal app bundle
+        run: |
+          APP_VERSION="0.0.${GITHUB_RUN_NUMBER}" \
+          APP_BUILD="${GITHUB_RUN_NUMBER}" \
+          CODE_SIGN_IDENTITY="-" \
+          ./scripts/package-app.sh
+
+      - name: Create and verify the downloadable disk image
+        run: |
+          ./scripts/create-release-disk-image.sh \
+            ".build/release/ASOP File Browser.app" \
+            "dist" \
+            "0.0.${GITHUB_RUN_NUMBER}" \
+            --version "0.0.${GITHUB_RUN_NUMBER}" \
+            --build "${GITHUB_RUN_NUMBER}" \
+            --require-no-bundled-tools
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ASOP-File-Browser-candidate-${{ github.sha }}
+          path: |
+            dist/ASOP-File-Browser-0.0.${{ github.run_number }}-macOS.dmg
+            dist/ASOP-File-Browser-0.0.${{ github.run_number }}-macOS.dmg.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  artifact-launch:
+    name: App launch (${{ matrix.name }})
+    needs:
+      - artifact
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple silicon
+            runner: macos-15
+          - name: Intel
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ASOP-File-Browser-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify and open the downloadable app
+        run: |
+          (
+            cd dist
+            shasum -a 256 -c \
+              "ASOP-File-Browser-0.0.${GITHUB_RUN_NUMBER}-macOS.dmg.sha256"
+          )
+          ./scripts/validate-release-disk-image.sh \
+            "dist/ASOP-File-Browser-0.0.${GITHUB_RUN_NUMBER}-macOS.dmg" \
+            --version "0.0.${GITHUB_RUN_NUMBER}" \
+            --build "${GITHUB_RUN_NUMBER}" \
+            --require-no-bundled-tools \
+            --launch-app
+
+  release-readiness:
+    name: Release readiness
+    if: ${{ always() }}
+    needs:
+      - workflow-lint
+      - release-label
+      - tests
+      - artifact
+      - artifact-launch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every build, test, and packaging job
+        env:
+          DISPATCH_PR_NUMBER: ${{ inputs.pull_request_number }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABEL_RESULT: ${{ needs.release-label.result }}
+          LINT_RESULT: ${{ needs.workflow-lint.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          ARTIFACT_RESULT: ${{ needs.artifact.result }}
+          APP_LAUNCH_RESULT: ${{ needs.artifact-launch.result }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" || -n "$DISPATCH_PR_NUMBER" ]]; then
+            EXPECTED_LABEL_RESULT="success"
+          else
+            EXPECTED_LABEL_RESULT="skipped"
+          fi
+          if [[ "$LABEL_RESULT" != "$EXPECTED_LABEL_RESULT" ]]; then
+            echo "Release label: $LABEL_RESULT"
+            exit 1
+          fi
+          if [[ "$LINT_RESULT" != "success" ||
+                "$TESTS_RESULT" != "success" ||
+                "$ARTIFACT_RESULT" != "success" ||
+                "$APP_LAUNCH_RESULT" != "success" ]]; then
+            echo "Workflow lint: $LINT_RESULT"
+            echo "Tests: $TESTS_RESULT"
+            echo "Release artifact: $ARTIFACT_RESULT"
+            echo "App launch: $APP_LAUNCH_RESULT"
+            exit 1
+          fi

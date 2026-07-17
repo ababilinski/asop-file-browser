@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Third-Party Notices — ASOP File Browser</title>
+    <meta name="description" content="Licenses, official downloads, and attribution for third-party software used with ASOP File Browser.">
+    <link rel="canonical" href="https://ababilinski.github.io/asop-file-browser/third-party-notices/">
+    <link rel="icon" href="../assets/app-icon.png">
+    <link rel="stylesheet" href="../styles.css?v=20260713a">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="nav-shell">
+        <a class="brand" href="../" aria-label="ASOP File Browser overview">
+          <img src="../assets/app-icon.png" alt="" width="28" height="28">
+          <span>ASOP File Browser</span>
+        </a>
+        <nav class="nav-links" aria-label="Site navigation">
+          <a href="../">Overview</a>
+          <a href="../connect/">Connect</a>
+          <a href="../phone-tools/">Phone Tools</a>
+          <a href="../faq/">FAQ</a>
+          <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+        </nav>
+        <a class="nav-action" href="https://github.com/ababilinski/asop-file-browser/releases">Check releases</a>
+      </div>
+    </header>
+
+    <main id="main" class="legal-page">
+      <section class="info-page-hero">
+        <div class="info-page-hero-inner">
+          <p class="eyebrow">Third-Party Notices</p>
+          <h1>Credits and 3rd Party Sources.</h1>
+          <p>What is included, what is optional, and where each project’s license and official source live.</p>
+          <dl class="notice-hero-facts" aria-label="Third-party software at a glance">
+            <div>
+              <dt>Included</dt>
+              <dd>MTPKit 0.1.4</dd>
+            </div>
+            <div>
+              <dt>Optional</dt>
+              <dd>ADB and scrcpy</dd>
+            </div>
+            <div>
+              <dt>Reviewed</dt>
+              <dd>July 11, 2026</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <article class="legal-content notices-content">
+        <header class="notice-intro">
+          <p class="legal-updated">Managed tool versions reviewed July 11, 2026</p>
+          <p>This page separates software compiled into ASOP File Browser from tools the app can optionally find or download. The standard app bundle contains <strong>MTPKit</strong>; it does not contain <strong>ADB</strong> or <strong>scrcpy</strong>.</p>
+          <nav class="notice-toc" aria-label="On this page">
+            <a href="#included-dependency">Included dependency</a>
+            <a href="#installing-tools">Optional tools</a>
+            <a href="#license-files">License files</a>
+            <a href="#android-robot">Android robot</a>
+          </nav>
+        </header>
+
+        <section id="included-dependency">
+          <div class="notice-section-heading">
+            <p class="notice-kicker">Compiled into the app</p>
+            <h2>Included dependency</h2>
+            <p>One third-party package is built directly into the standard application.</p>
+          </div>
+
+          <article class="notice-component notice-component-featured">
+            <header class="notice-component-header">
+              <div class="notice-monogram" aria-hidden="true">M</div>
+              <div>
+                <p class="notice-status notice-status-included">Included in app</p>
+                <h3>MTPKit <span>0.1.4</span></h3>
+              </div>
+            </header>
+            <p>MTPKit is the Swift package that connects directly to a phone over USB for File Transfer Mode. It enables browsing, uploads, downloads, folders, and other MTP operations without requiring ADB.</p>
+            <dl class="notice-facts">
+              <div>
+                <dt>Author</dt>
+                <dd>Ricky Chuang</dd>
+              </div>
+              <div>
+                <dt>License</dt>
+                <dd>MIT</dd>
+              </div>
+              <div>
+                <dt>Copyright notice</dt>
+                <dd>Copyright © 2026 Ricky Chuang</dd>
+              </div>
+            </dl>
+            <p class="copyright-explainer"><strong>Why does this say 2026?</strong> That year is part of MTPKit 0.1.4’s upstream MIT license notice. It stays exactly as published for this version; it is not a website year that changes annually.</p>
+            <div class="notice-link-row">
+              <a class="notice-primary-link" href="https://github.com/5j54d93/MTPKit/tree/0.1.4">Original project on GitHub</a>
+              <a href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/MTPKit-LICENSE.txt">MIT license copy</a>
+              <a href="https://github.com/ababilinski/asop-file-browser/tree/main/Vendor/MTPKit">Vendored source</a>
+            </div>
+          </article>
+        </section>
+
+        <section id="installing-tools">
+          <div class="notice-section-heading">
+            <p class="notice-kicker">Not in the standard app bundle</p>
+            <h2>Optional external tools</h2>
+            <p>File Transfer Mode does not need either tool. Developer Options features use ADB; Phone Control also uses scrcpy.</p>
+          </div>
+
+          <div class="tool-install-grid">
+            <article class="tool-install-card notice-component">
+              <header class="notice-component-header">
+                <div class="notice-monogram notice-monogram-blue" aria-hidden="true">A</div>
+                <div>
+                  <p class="notice-status">Optional managed tool</p>
+                  <h3>Android Debug Bridge <span>37.0.0</span></h3>
+                </div>
+              </header>
+              <p>ADB connects to Developer Options over USB or Wi-Fi for file operations, app tools, screenshots, and recording. The managed scrcpy package includes this version of ADB.</p>
+              <dl class="notice-facts notice-facts-compact">
+                <div>
+                  <dt>Project</dt>
+                  <dd>Android Open Source Project</dd>
+                </div>
+                <div>
+                  <dt>Source license</dt>
+                  <dd>Apache 2.0</dd>
+                </div>
+                <div>
+                  <dt>Download terms</dt>
+                  <dd>Google Android SDK terms</dd>
+                </div>
+              </dl>
+              <div class="notice-link-row">
+                <a class="notice-primary-link" href="https://android.googlesource.com/platform/packages/modules/adb/">Original AOSP source</a>
+                <a href="https://developer.android.com/tools/releases/platform-tools">Official Platform-Tools</a>
+                <a href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt">Complete notice</a>
+              </div>
+              <p class="notice-source-note">ADB’s authoritative repository is hosted by the Android Open Source Project on Google Git, not GitHub.</p>
+            </article>
+            <article class="tool-install-card notice-component">
+              <header class="notice-component-header">
+                <div class="notice-monogram notice-monogram-purple" aria-hidden="true">S</div>
+                <div>
+                  <p class="notice-status">Optional managed tool</p>
+                  <h3>scrcpy <span>4.0</span></h3>
+                </div>
+              </header>
+              <p>scrcpy displays and controls the connected phone. Its official macOS archive includes the matching server, support files, and ADB used by the managed setup.</p>
+              <dl class="notice-facts notice-facts-compact">
+                <div>
+                  <dt>Authors</dt>
+                  <dd>Genymobile and Romain Vimont</dd>
+                </div>
+                <div>
+                  <dt>License</dt>
+                  <dd>Apache 2.0</dd>
+                </div>
+                <div>
+                  <dt>Use in this app</dt>
+                  <dd>Phone Control</dd>
+                </div>
+              </dl>
+              <div class="notice-link-row">
+                <a class="notice-primary-link" href="https://github.com/Genymobile/scrcpy">Original project on GitHub</a>
+                <a href="https://github.com/Genymobile/scrcpy/releases/tag/v4.0">Official 4.0 release</a>
+                <a href="https://github.com/Genymobile/scrcpy/blob/v4.0/doc/macos.md">macOS instructions</a>
+                <a href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/scrcpy-4.0-LICENSE.txt">License copy</a>
+              </div>
+            </article>
+          </div>
+
+          <aside class="managed-copy-note">
+            <div>
+              <p class="notice-kicker">Installing safely</p>
+              <h3>Use Managed Copy or your own compatible installation.</h3>
+            </div>
+            <p>In <strong>Settings → Tools</strong>, choose <strong>Managed Copy</strong>, then <strong>Download</strong>. The app downloads the checksum-pinned scrcpy 4.0 archive from its official GitHub release and keeps it in Application Support. No Homebrew, Terminal, or administrator password is required.</p>
+          </aside>
+        </section>
+
+        <section id="license-files">
+          <h2>Files shipped with the project</h2>
+          <p>These legal records are included with the source repository and packaged app. They identify each component instead of requiring readers to interpret filenames.</p>
+
+          <div class="notice-file-groups">
+            <article class="notice-file-group">
+              <h3>MTPKit</h3>
+              <p>License for the dependency compiled into File Transfer Mode.</p>
+              <a class="notice-file-row" href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/MTPKit-LICENSE.txt">
+                <span class="notice-file-type">MIT</span>
+                <span><strong>MTPKit 0.1.4 license</strong><small>Copyright notice and MIT permission terms</small></span>
+              </a>
+            </article>
+
+            <article class="notice-file-group">
+              <h3>ADB and Platform-Tools</h3>
+              <p>Open-source license, Google’s complete package notice, and the accepted build record.</p>
+              <a class="notice-file-row" href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/Apache-2.0.txt">
+                <span class="notice-file-type">A2</span>
+                <span><strong>Apache License 2.0</strong><small>License used by the open-source ADB code</small></span>
+              </a>
+              <a class="notice-file-row" href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0-NOTICE.txt">
+                <span class="notice-file-type">TXT</span>
+                <span><strong>Platform-Tools 37.0.0 complete notice</strong><small>Unmodified notice supplied with Google’s package</small></span>
+              </a>
+              <a class="notice-file-row" href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/Android-SDK-Platform-Tools-37.0.0.md">
+                <span class="notice-file-type">SHA</span>
+                <span><strong>Platform-Tools build record</strong><small>Version, provenance, and verified file hashes</small></span>
+              </a>
+            </article>
+
+            <article class="notice-file-group">
+              <h3>scrcpy</h3>
+              <p>Exact license published for the optional managed Phone Control release.</p>
+              <a class="notice-file-row" href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/scrcpy-4.0-LICENSE.txt">
+                <span class="notice-file-type">A2</span>
+                <span><strong>scrcpy 4.0 license</strong><small>Apache 2.0 terms and upstream copyright notices</small></span>
+              </a>
+            </article>
+
+            <article class="notice-file-group notice-file-group-wide">
+              <h3>Complete project record</h3>
+              <p>The human-readable notice and canonical managed-tool manifest tie versions, sources, checksums, and files together.</p>
+              <div class="notice-link-row">
+                <a class="notice-primary-link" href="https://github.com/ababilinski/asop-file-browser/blob/main/THIRD_PARTY_NOTICES.md">Complete third-party notice</a>
+                <a href="https://github.com/ababilinski/asop-file-browser/tree/main/ThirdPartyLicenses">Browse all license files</a>
+                <a href="https://github.com/ababilinski/asop-file-browser/blob/main/ThirdPartyLicenses/managed-tools.json">Managed-tool manifest</a>
+              </div>
+            </article>
+          </div>
+
+          <details class="distributor-details">
+            <summary>Information for people distributing a custom build</summary>
+            <div>
+              <p>The standard app bundle does not contain ADB or scrcpy. A custom build that adds Platform-Tools must include the matching complete notice and unmodified <code>source.properties</code>. A build that redistributes scrcpy must include the licenses, notices, dependent libraries, and any source or relinking materials required by that exact build.</p>
+              <p>A generic Apache license file does not replace a package’s complete notices. Do not copy an arbitrary Homebrew executable into a release.</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="android-robot" class="android-brand-section">
+          <div class="android-robot-heading">
+            <img src="../assets/app-icon.png" alt="ASOP File Browser icon showing the green Android robot behind a blue folder" width="88" height="88">
+            <div>
+              <p class="notice-kicker">Brand attribution</p>
+              <h2>Android robot</h2>
+            </div>
+          </div>
+          <p>The green character visible in the ASOP File Browser icon is the Android robot. Google permits the robot to be reproduced or modified when the required attribution is included.</p>
+          <blockquote>The Android robot is reproduced or modified from work created and shared by Google and used according to terms described in the <a href="https://creativecommons.org/licenses/by/3.0/">Creative Commons 3.0 Attribution License.</a></blockquote>
+          <p><a href="https://developer.android.com/distribute/marketing-tools/brand-guidelines">Read Google’s Android brand guidelines</a></p>
+
+          <div class="android-name-note" id="trademarks">
+            <h3>Android name</h3>
+            <p>Android is a trademark of Google LLC. ASOP File Browser is an independent project and is not affiliated with or endorsed by Google.</p>
+          </div>
+        </section>
+
+        <aside class="legal-note">
+          <p>ADB, Android, scrcpy, and MTPKit are separate projects. Their names are used only to identify compatibility.</p>
+        </aside>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-shell">
+        <nav class="footer-breadcrumb" aria-label="Current page">
+          <a class="breadcrumb-home" href="../" aria-label="ASOP File Browser overview">
+            <img src="../assets/app-icon.png" alt="" width="24" height="24">
+          </a>
+          <span class="breadcrumb-separator" aria-hidden="true">›</span>
+          <span class="breadcrumb-title" aria-current="page">Third-Party Notices</span>
+        </nav>
+        <div class="footer-owner">
+          <p>© 2026 Adrian Babilinski</p>
+          <span>Android is a trademark of Google LLC. This independent project is not affiliated with or endorsed by Google.</span>
+        </div>
+        <div class="footer-links">
+          <div class="footer-link-group">
+            <p class="footer-link-title">Explore</p>
+            <nav aria-label="Explore">
+              <a href="../">Overview</a>
+              <a href="../connect/">Connect</a>
+              <a href="../phone-tools/">Phone Tools</a>
+              <a href="../faq/">FAQ</a>
+              <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+            </nav>
+          </div>
+          <div class="footer-link-group">
+            <p class="footer-link-title">Legal</p>
+            <nav aria-label="Legal">
+              <a href="../terms/">Terms of Service</a>
+              <a href="../privacy/">Privacy Policy</a>
+              <a href="./" aria-current="page">Third-Party Notices</a>
+              <a href="https://github.com/ababilinski/asop-file-browser/blob/main/LICENSE">GPL v3</a>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

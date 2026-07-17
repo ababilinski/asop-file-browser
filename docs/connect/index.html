@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Connect your phone — ASOP File Browser</title>
+    <meta
+      name="description"
+      content="Set up File Transfer Mode or Developer Options for USB and Wi-Fi debugging. No phone app needed."
+    >
+    <link rel="canonical" href="https://ababilinski.github.io/asop-file-browser/connect/">
+    <link rel="icon" href="../assets/app-icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Connect your phone — ASOP File Browser">
+    <meta property="og:description" content="Step-by-step setup for File Transfer Mode, USB debugging, and Wi-Fi debugging.">
+    <meta property="og:url" content="https://ababilinski.github.io/asop-file-browser/connect/">
+    <meta property="og:image" content="https://ababilinski.github.io/asop-file-browser/assets/social-preview-v3.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Connect your phone — ASOP File Browser">
+    <meta name="twitter:description" content="Step-by-step setup for File Transfer Mode, USB debugging, and Wi-Fi debugging.">
+    <meta name="twitter:image" content="https://ababilinski.github.io/asop-file-browser/assets/social-preview-v3.png">
+    <link rel="stylesheet" href="../styles.css?v=20260712a">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="nav-shell">
+        <a class="brand" href="../" aria-label="ASOP File Browser overview">
+          <img src="../assets/app-icon.png" alt="" width="28" height="28">
+          <span>ASOP File Browser</span>
+        </a>
+        <nav class="nav-links" aria-label="Site navigation">
+          <a href="../">Overview</a>
+          <a class="is-current" href="./" aria-current="page">Connect</a>
+          <a href="../phone-tools/">Phone Tools</a>
+          <a href="../faq/">FAQ</a>
+          <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+        </nav>
+        <a class="nav-action" href="https://github.com/ababilinski/asop-file-browser/releases">Check releases</a>
+      </div>
+    </header>
+
+    <main id="main" class="connect-page">
+      <section class="connect-hero">
+        <p class="eyebrow">Connection guide</p>
+        <h1>Connect your phone.</h1>
+        <p>Choose a setup.</p>
+      </section>
+
+      <section class="connection-comparison" aria-labelledby="connection-comparison-title">
+        <div class="connection-comparison-heading" data-reveal>
+          <p class="eyebrow">At a glance</p>
+          <h2 id="connection-comparison-title">What each connection can do.</h2>
+          <p>File Transfer Mode covers everyday files. Developer Options adds Phone Tools over USB or Wi-Fi.</p>
+        </div>
+
+        <p class="connection-scroll-hint">Swipe to compare modes <span aria-hidden="true">→</span></p>
+
+        <div
+          class="connection-table-scroll"
+          role="region"
+          aria-labelledby="connection-comparison-title"
+          tabindex="0"
+          data-reveal
+          style="--reveal-delay: 80ms"
+        >
+          <table class="connection-feature-table" aria-label="Feature availability by connection mode">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">File Transfer Mode</th>
+                <th scope="col">Developer Options</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Browse files and folders</th>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Drag files between your phone and Mac</th>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Preview photos, videos, and documents</th>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Manage installed apps</th>
+                <td><span class="feature-dash" aria-label="Not available">—</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Take screenshots and screen recordings</th>
+                <td><span class="feature-dash" aria-label="Not available">—</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Control your phone from your Mac</th>
+                <td><span class="feature-dash" aria-label="Not available">—</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Connect without a cable</th>
+                <td><span class="feature-dash" aria-label="Not available">—</span></td>
+                <td><span class="feature-check" aria-label="Available">✓</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="connection-comparison-note">No phone app is needed. Phone Control also needs Phone Tools, which the Mac app can set up.</p>
+      </section>
+
+      <section class="path-section" aria-labelledby="path-title">
+        <div class="path-heading" data-reveal>
+          <p class="eyebrow">Choose a path</p>
+          <h2 id="path-title">What do you want to set up?</h2>
+        </div>
+
+        <div class="path-picker" role="tablist" aria-label="Connection method" data-reveal="image">
+          <button
+            class="path-option is-selected"
+            id="file-transfer-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="file-transfer"
+            data-path="file-transfer"
+          >
+            <span class="path-number">01</span>
+            <span class="path-name">File Transfer Mode</span>
+            <span class="path-summary">Move files with a USB cable.</span>
+            <span class="path-note">No Developer Options</span>
+          </button>
+          <button
+            class="path-option"
+            id="developer-options-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="developer-options"
+            data-path="developer-options"
+            tabindex="-1"
+          >
+            <span class="path-number">02</span>
+            <span class="path-name">Developer Options</span>
+            <span class="path-summary">Use Phone Tools over USB or Wi-Fi.</span>
+            <span class="path-note">One-time phone setup</span>
+          </button>
+        </div>
+      </section>
+
+      <div class="path-panels">
+        <section class="connection-path" id="file-transfer" role="tabpanel" aria-labelledby="file-transfer-tab">
+          <div class="path-intro">
+            <p class="eyebrow">File Transfer Mode</p>
+            <h2>Plug in. Start browsing.</h2>
+            <p>The simplest way to move files.</p>
+          </div>
+
+          <ol class="guided-steps" data-reveal-list="steps">
+            <li>
+              <span class="step-number">1</span>
+              <div>
+                <h3>Plug in your phone.</h3>
+                <p>Use a USB cable that can transfer data. Unlock the phone.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-number">2</span>
+              <div>
+                <h3>Choose File transfer.</h3>
+                <p>Open the USB notification on your phone, then choose <strong>File transfer / Android Auto</strong>.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-number">3</span>
+              <div>
+                <h3>Scan your phone.</h3>
+                <p>In the Mac app, choose <strong>File Transfer Mode</strong>, then <strong>Scan Phone</strong>. Allow access if macOS asks.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-number">4</span>
+              <div>
+                <h3>Open File Transfer.</h3>
+                <p>Your files are ready to browse, preview, and move.</p>
+              </div>
+            </li>
+          </ol>
+
+          <aside class="path-callout">
+            <div>
+              <p class="eyebrow">Want Phone Tools?</p>
+              <h3>Set up Developer Options.</h3>
+              <p>Then connect with USB debugging or Wi-Fi debugging.</p>
+            </div>
+            <a class="text-link" href="#developer-options">Open the steps <span aria-hidden="true">›</span></a>
+          </aside>
+        </section>
+
+        <section class="connection-path developer-path" id="developer-options" role="tabpanel" aria-labelledby="developer-options-tab">
+          <div class="path-intro">
+            <p class="eyebrow">Developer Options</p>
+            <h2>Set up once. Choose USB or Wi-Fi.</h2>
+            <p>For Phone Tools and wireless access.</p>
+          </div>
+
+          <div class="developer-start">
+            <div>
+              <h3>Enable Developer Options.</h3>
+              <ol class="developer-option-steps" data-reveal-list="steps">
+                <li>
+                  <span>1</span>
+                  <div>
+                    <h4>Open Settings.</h4>
+                  </div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div>
+                    <h4>Tap About phone.</h4>
+                    <p>On some phones, tap <strong>Software information</strong> next.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>3</span>
+                  <div>
+                    <h4>Tap Build number seven times.</h4>
+                    <p>Enter your PIN if Android asks.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>4</span>
+                  <div>
+                    <h4>Open Developer options.</h4>
+                    <p>Go back to Settings. It is usually under <strong>System</strong>.</p>
+                  </div>
+                </li>
+              </ol>
+            </div>
+          </div>
+
+          <div class="debug-heading">
+            <p class="eyebrow">Then choose a connection</p>
+            <h3>USB debugging or Wi-Fi debugging.</h3>
+          </div>
+
+          <div class="debug-routes">
+            <article class="debug-route" id="usb-debugging">
+              <p class="debug-route-number">01</p>
+              <h3>USB debugging.</h3>
+              <p class="debug-route-lede">Use the same cable for Phone Tools.</p>
+              <ol class="debug-steps" data-reveal-list="steps">
+                <li>
+                  <span>1</span>
+                  <div>
+                    <h4>Turn on USB debugging.</h4>
+                    <p>Open <strong>Developer Options</strong>, switch on <strong>USB debugging</strong>, and confirm.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div>
+                    <h4>Connect and approve.</h4>
+                    <p>Plug in the unlocked phone. Tap <strong>Allow</strong> when it asks about USB debugging.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>3</span>
+                  <div>
+                    <h4>Refresh the connection.</h4>
+                    <p>In the Mac app, choose <strong>Refresh USB Connection</strong>.</p>
+                  </div>
+                </li>
+              </ol>
+            </article>
+
+            <article class="debug-route debug-route-wifi" id="wifi-debugging">
+              <p class="debug-route-number">02</p>
+              <h3>Wi-Fi debugging.</h3>
+              <p class="debug-route-lede">Pair without leaving a cable connected. Android 11 or later.</p>
+              <ol class="debug-steps" data-reveal-list="steps">
+                <li>
+                  <span>1</span>
+                  <div>
+                    <h4>Turn on debugging.</h4>
+                    <p>In <strong>Developer Options</strong>, turn on <strong>Wireless debugging</strong>. Use the same Wi-Fi as your Mac.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div>
+                    <h4>Open QR pairing.</h4>
+                    <p>On your Mac, choose <strong>Pair with Wi-Fi QR Code</strong>. On the phone, tap <strong>Pair device with QR code</strong>.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>3</span>
+                  <div>
+                    <h4>Scan and connect.</h4>
+                    <p>Use your phone to scan the code shown on your Mac. The app connects when pairing finishes.</p>
+                  </div>
+                </li>
+              </ol>
+            </article>
+          </div>
+
+          <aside class="path-callout path-callout-wifi developer-tools-callout">
+            <div>
+              <p class="eyebrow">Connected with debugging</p>
+              <h3>Phone Tools are ready.</h3>
+              <p>Search files, manage apps, take screenshots, and control your phone.</p>
+            </div>
+            <a class="text-link" href="../phone-tools/">See Phone Tools <span aria-hidden="true">›</span></a>
+          </aside>
+        </section>
+      </div>
+
+      <section class="help-section">
+        <div class="setup-heading" data-reveal>
+          <p class="eyebrow">Quick fixes</p>
+          <h2>Not connected?</h2>
+          <a class="text-link help-more-link" href="../faq/">See all questions and troubleshooting <span aria-hidden="true">›</span></a>
+        </div>
+        <div class="help-list" data-reveal style="--reveal-delay: 80ms">
+          <details>
+            <summary>File Transfer Mode not finding the phone?</summary>
+            <p>Unlock it, choose <strong>File transfer</strong>, then scan again.</p>
+          </details>
+          <details>
+            <summary>No File transfer option?</summary>
+            <p>Try another cable or USB port. Some cables only charge.</p>
+          </details>
+          <details>
+            <summary>USB debugging not connecting?</summary>
+            <p>Unlock the phone, reconnect the cable, approve the prompt, then refresh the USB connection.</p>
+          </details>
+          <details>
+            <summary>Wi-Fi pairing stuck?</summary>
+            <p>Check that both devices use the same Wi-Fi and keep the QR screen open.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="requirements-band">
+        <h2>Ready when your phone is.</h2>
+        <ul>
+          <li>No phone app</li>
+          <li>No account</li>
+          <li>No root</li>
+        </ul>
+        <a class="button button-primary" href="https://github.com/ababilinski/asop-file-browser/releases">Check releases</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-shell">
+        <nav class="footer-breadcrumb" aria-label="Current page">
+          <a class="breadcrumb-home" href="../" aria-label="ASOP File Browser overview">
+            <img src="../assets/app-icon.png" alt="" width="24" height="24">
+          </a>
+          <span class="breadcrumb-separator" aria-hidden="true">›</span>
+          <span class="breadcrumb-title" aria-current="page">Connect</span>
+        </nav>
+        <div class="footer-owner">
+          <p>© 2026 Adrian Babilinski</p>
+          <span>Android is a trademark of Google LLC. This independent project is not affiliated with or endorsed by Google.</span>
+        </div>
+        <div class="footer-links">
+          <div class="footer-link-group">
+            <p class="footer-link-title">Explore</p>
+            <nav aria-label="Explore">
+              <a href="../">Overview</a>
+              <a href="./">Connect</a>
+              <a href="../phone-tools/">Phone Tools</a>
+              <a href="../faq/">FAQ</a>
+              <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+            </nav>
+          </div>
+          <div class="footer-link-group">
+            <p class="footer-link-title">Legal</p>
+            <nav aria-label="Legal">
+              <a href="../terms/">Terms of Service</a>
+              <a href="../privacy/">Privacy Policy</a>
+              <a href="../third-party-notices/">Third-Party Notices</a>
+              <a href="https://github.com/ababilinski/asop-file-browser/blob/main/LICENSE">GPL v3</a>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </footer>
+    <script src="../site-motion.js?v=20260711d"></script>
+    <script src="../path-picker.js"></script>
+  </body>
+</html>

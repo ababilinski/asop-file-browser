@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FAQ and troubleshooting — ASOP File Browser</title>
+    <meta
+      name="description"
+      content="Answers and connection fixes for ASOP File Browser on Mac."
+    >
+    <link rel="canonical" href="https://ababilinski.github.io/asop-file-browser/faq/">
+    <link rel="icon" href="../assets/app-icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="FAQ and troubleshooting — ASOP File Browser">
+    <meta property="og:description" content="Answers and connection fixes for ASOP File Browser on Mac.">
+    <meta property="og:url" content="https://ababilinski.github.io/asop-file-browser/faq/">
+    <meta property="og:image" content="https://ababilinski.github.io/asop-file-browser/assets/social-preview-v3.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="stylesheet" href="../styles.css?v=20260712a">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="nav-shell">
+        <a class="brand" href="../" aria-label="ASOP File Browser overview">
+          <img src="../assets/app-icon.png" alt="" width="28" height="28">
+          <span>ASOP File Browser</span>
+        </a>
+        <nav class="nav-links" aria-label="Site navigation">
+          <a href="../">Overview</a>
+          <a href="../connect/">Connect</a>
+          <a href="../phone-tools/">Phone Tools</a>
+          <a class="is-current" href="./" aria-current="page">FAQ</a>
+          <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+        </nav>
+        <a class="nav-action" href="https://github.com/ababilinski/asop-file-browser/releases">Check releases</a>
+      </div>
+    </header>
+
+    <main id="main" class="help-page">
+      <section class="connect-hero">
+        <p class="eyebrow">Help</p>
+        <h1>Questions and fixes.</h1>
+        <p>Quick answers, then the steps to get connected again.</p>
+      </section>
+
+      <section class="help-section" aria-labelledby="faq-title">
+        <div class="setup-heading" data-reveal>
+          <p class="eyebrow">FAQ</p>
+          <h2 id="faq-title">Frequently asked.</h2>
+        </div>
+        <div class="help-list" data-reveal style="--reveal-delay: 80ms">
+          <details>
+            <summary>Do I need an app on my phone?</summary>
+            <p>No. It uses connection features already built into your phone.</p>
+          </details>
+          <details>
+            <summary>Is it free?</summary>
+            <p>Yes. ASOP File Browser is free and open source under the <a href="https://github.com/ababilinski/asop-file-browser/blob/main/LICENSE">GPL v3</a>.</p>
+          </details>
+          <details>
+            <summary>Do I need Developer Options to move files?</summary>
+            <p>No. <a href="../connect/#file-transfer">File Transfer Mode</a> works over USB. Developer Options are only needed for Wi-Fi and Phone Tools.</p>
+          </details>
+          <details>
+            <summary>Can I connect over Wi-Fi?</summary>
+            <p>Yes. On Android 11 or later, turn on Wireless debugging and follow the <a href="../connect/#wifi-debugging">Wi-Fi steps</a>.</p>
+          </details>
+          <details>
+            <summary>Do I need an account?</summary>
+            <p>No. There is no sign-in or account.</p>
+          </details>
+          <details>
+            <summary>Is it private?</summary>
+            <p>Files move directly between your phone and Mac. There is no account, app analytics, or cloud file transfer. <a href="../privacy/">Read the Privacy Policy.</a></p>
+          </details>
+          <details>
+            <summary>Can I transfer files between devices?</summary>
+            <p>Yes. Move files between your phone and Mac. If two debugging-connected phones appear in the app, you can also copy and paste between them; the transfer is staged locally on your Mac.</p>
+          </details>
+          <details>
+            <summary>What version of macOS does it support?</summary>
+            <p>macOS 15 Sequoia or later, on Apple silicon and Intel Macs.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="help-section" aria-labelledby="troubleshooting-title">
+        <div class="setup-heading" data-reveal>
+          <p class="eyebrow">Troubleshooting</p>
+          <h2 id="troubleshooting-title">When something is off.</h2>
+          <p>Start with the connection, then try the action again.</p>
+        </div>
+        <div class="help-list" data-reveal style="--reveal-delay: 80ms">
+          <details>
+            <summary>File Transfer Mode cannot find the phone</summary>
+            <p>Unlock the phone, choose <strong>File transfer</strong> from its USB notification, then scan again.</p>
+          </details>
+          <details>
+            <summary>The cable charges but nothing appears</summary>
+            <p>Try another cable or USB port. Some cables only carry power.</p>
+          </details>
+          <details>
+            <summary>The debugging connection is waiting or unauthorized</summary>
+            <p>Unlock the phone, reconnect the cable, approve the debugging prompt, then refresh. The <a href="../connect/#usb-debugging">USB debugging steps</a> show the full setup.</p>
+          </details>
+          <details>
+            <summary>Wi-Fi pairing will not finish</summary>
+            <p>Keep both devices on the same Wi-Fi network and leave the phone’s pairing screen open. If it still fails, turn Wireless debugging off and back on before pairing again.</p>
+          </details>
+          <details>
+            <summary>Phone Tools are missing or damaged</summary>
+            <p>Open <strong>Settings → Tools</strong>. Choose <strong>Managed Copy</strong> for the missing tool, then choose <strong>Download</strong>. You can also use a compatible copy already on your Mac. <a href="../third-party-notices/#installing-tools">See Phone Tools details.</a></p>
+          </details>
+          <details>
+            <summary>A folder will not open</summary>
+            <p>Android protects some app and system folders. Try Internal Storage, Downloads, Pictures, or another folder Android makes available.</p>
+          </details>
+          <details>
+            <summary>A transfer stopped partway through</summary>
+            <p>Reconnect the phone and use <strong>Retry</strong> in the transfer panel. Check that the destination still has enough free space.</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-shell">
+        <nav class="footer-breadcrumb" aria-label="Current page">
+          <a class="breadcrumb-home" href="../" aria-label="ASOP File Browser overview">
+            <img src="../assets/app-icon.png" alt="" width="24" height="24">
+          </a>
+          <span class="breadcrumb-separator" aria-hidden="true">›</span>
+          <span class="breadcrumb-title" aria-current="page">FAQ &amp; Troubleshooting</span>
+        </nav>
+        <div class="footer-owner">
+          <p>© 2026 Adrian Babilinski</p>
+          <span>Android is a trademark of Google LLC. This independent project is not affiliated with or endorsed by Google.</span>
+        </div>
+        <div class="footer-links">
+          <div class="footer-link-group">
+            <p class="footer-link-title">Explore</p>
+            <nav aria-label="Explore">
+              <a href="../">Overview</a>
+              <a href="../connect/">Connect</a>
+              <a href="../phone-tools/">Phone Tools</a>
+              <a href="./" aria-current="page">FAQ</a>
+              <a href="https://github.com/ababilinski/asop-file-browser">GitHub</a>
+            </nav>
+          </div>
+          <div class="footer-link-group">
+            <p class="footer-link-title">Legal</p>
+            <nav aria-label="Legal">
+              <a href="../terms/">Terms of Service</a>
+              <a href="../privacy/">Privacy Policy</a>
+              <a href="../third-party-notices/">Third-Party Notices</a>
+              <a href="https://github.com/ababilinski/asop-file-browser/blob/main/LICENSE">GPL v3</a>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </footer>
+    <script src="../site-motion.js?v=20260711d"></script>
+  </body>
+</html>
