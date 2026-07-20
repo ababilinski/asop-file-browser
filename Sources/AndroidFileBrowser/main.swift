@@ -225,6 +225,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             presentOperationInProgressAlert()
             return .terminateCancel
         }
+        guard confirmClosingPhoneControlWindowsIfNeeded(model: model) else {
+            model.cancelTerminationRequest()
+            return .terminateCancel
+        }
         if model.shouldAutomaticallyEmptyTrashAtSessionEnd {
             finishTermination(model: model, sender: sender, emptyTrash: true)
             return .terminateLater
@@ -269,6 +273,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             model.cancelTerminationRequest()
             return .terminateCancel
         }
+    }
+
+    private func confirmClosingPhoneControlWindowsIfNeeded(model: AppModel) -> Bool {
+        let windowCount = model.phoneControlSessions.count
+        guard windowCount > 0 else { return true }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = windowCount == 1
+            ? "Close Phone Control and quit?"
+            : "Close Phone Control windows and quit?"
+        alert.informativeText = windowCount == 1
+            ? "Closing ASOP File Browser will also close the Phone Control window opened by this app."
+            : "Closing ASOP File Browser will also close the \(windowCount) Phone Control windows opened by this app."
+        alert.addButton(withTitle: "Close Windows and Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func finishTermination(model: AppModel, sender: NSApplication, emptyTrash: Bool) {

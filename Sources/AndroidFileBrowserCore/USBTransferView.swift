@@ -67,7 +67,11 @@ struct USBTransferView: View {
             manager.startBrowsingIfNeeded()
         }
         .alert(item: $manager.alert) { alert in
-            Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"), action: { alert.onDismiss?() })
+            )
         }
         .sheet(isPresented: $manager.isCreatingMTPFolder) {
             NameEntrySheet(title: "New Folder", defaultValue: "Untitled Folder") { name in

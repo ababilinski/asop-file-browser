@@ -1663,6 +1663,74 @@ public struct ScrcpyWindowPlacement: Equatable, Sendable {
     }
 }
 
+public enum PhoneControlFrameRateLimit: Int, CaseIterable, Identifiable, Codable, Sendable {
+    case automatic = 0
+    case fps30 = 30
+    case fps60 = 60
+
+    public var id: Int { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .fps30: "30 fps"
+        case .fps60: "60 fps"
+        }
+    }
+}
+
+public enum PhoneControlVideoCodec: String, CaseIterable, Identifiable, Codable, Sendable {
+    case automatic
+    case h264
+    case h265
+    case av1
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .h264: "H.264"
+        case .h265: "H.265"
+        case .av1: "AV1"
+        }
+    }
+}
+
+public struct PhoneControlDeviceOptions: Equatable, Codable, Sendable {
+    public var wakesDeviceOnOpen: Bool
+    public var capturesAudio: Bool
+    public var acceptsInput: Bool
+    public var synchronizesClipboard: Bool
+    public var staysAwake: Bool
+    public var turnsDeviceScreenOff: Bool
+    public var alwaysOnTop: Bool
+    public var frameRateLimit: PhoneControlFrameRateLimit
+    public var videoCodec: PhoneControlVideoCodec
+
+    public init(
+        wakesDeviceOnOpen: Bool = false,
+        capturesAudio: Bool = true,
+        acceptsInput: Bool = true,
+        synchronizesClipboard: Bool = true,
+        staysAwake: Bool = false,
+        turnsDeviceScreenOff: Bool = false,
+        alwaysOnTop: Bool = true,
+        frameRateLimit: PhoneControlFrameRateLimit = .automatic,
+        videoCodec: PhoneControlVideoCodec = .automatic
+    ) {
+        self.wakesDeviceOnOpen = wakesDeviceOnOpen
+        self.capturesAudio = capturesAudio
+        self.acceptsInput = acceptsInput
+        self.synchronizesClipboard = synchronizesClipboard
+        self.staysAwake = staysAwake
+        self.turnsDeviceScreenOff = turnsDeviceScreenOff
+        self.alwaysOnTop = alwaysOnTop
+        self.frameRateLimit = frameRateLimit
+        self.videoCodec = videoCodec
+    }
+}
+
 public struct PhoneControlSession: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let deviceSerial: String

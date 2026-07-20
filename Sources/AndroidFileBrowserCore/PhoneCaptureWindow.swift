@@ -467,6 +467,7 @@ struct PhoneCaptureControlsView: View {
                         }
                     }
                     Spacer()
+                    phoneControlSettingsMenu(for: device)
                     if model.phoneControlSession(for: device.serial) != nil {
                         Button("Show") {
                             model.showPhoneControl(deviceSerial: device.serial)
@@ -494,6 +495,85 @@ struct PhoneCaptureControlsView: View {
         .liquidGlassPanel(
             in: RoundedRectangle(cornerRadius: 14, style: .continuous),
             fallbackMaterial: .regularMaterial
+        )
+    }
+
+    private func phoneControlSettingsMenu(for device: AndroidDevice) -> some View {
+        let hasActiveSession = model.phoneControlSession(for: device.serial) != nil
+        return Menu {
+            Toggle(
+                "Wake display when opening",
+                isOn: phoneControlOptionBinding(for: device.serial, \.wakesDeviceOnOpen)
+            )
+            Toggle(
+                "Device audio",
+                isOn: phoneControlOptionBinding(for: device.serial, \.capturesAudio)
+            )
+            Toggle(
+                "Mouse and keyboard input",
+                isOn: phoneControlOptionBinding(for: device.serial, \.acceptsInput)
+            )
+            Toggle(
+                "Clipboard sync",
+                isOn: phoneControlOptionBinding(for: device.serial, \.synchronizesClipboard)
+            )
+
+            Divider()
+
+            Toggle(
+                "Keep device awake while connected",
+                isOn: phoneControlOptionBinding(for: device.serial, \.staysAwake)
+            )
+            Toggle(
+                "Turn device screen off while connected",
+                isOn: phoneControlOptionBinding(for: device.serial, \.turnsDeviceScreenOff)
+            )
+            Toggle(
+                "Keep window above others",
+                isOn: phoneControlOptionBinding(for: device.serial, \.alwaysOnTop)
+            )
+
+            Divider()
+
+            Picker(
+                "Frame Rate",
+                selection: phoneControlOptionBinding(for: device.serial, \.frameRateLimit)
+            ) {
+                ForEach(PhoneControlFrameRateLimit.allCases) { limit in
+                    Text(limit.title).tag(limit)
+                }
+            }
+            Picker(
+                "Video Format",
+                selection: phoneControlOptionBinding(for: device.serial, \.videoCodec)
+            ) {
+                ForEach(PhoneControlVideoCodec.allCases) { codec in
+                    Text(codec.title).tag(codec)
+                }
+            }
+
+            if hasActiveSession {
+                Divider()
+                Text("Changes apply the next time this window opens.")
+            }
+        } label: {
+            Image(systemName: "gearshape")
+                .frame(width: 18, height: 18)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Phone Control settings for \(device.title)")
+        .accessibilityLabel("Phone Control settings for \(device.title)")
+    }
+
+    private func phoneControlOptionBinding<Value>(
+        for deviceSerial: String,
+        _ keyPath: WritableKeyPath<PhoneControlDeviceOptions, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { settings.phoneControlOptions(for: deviceSerial)[keyPath: keyPath] },
+            set: { settings.setPhoneControlOption($0, for: deviceSerial, keyPath: keyPath) }
         )
     }
 

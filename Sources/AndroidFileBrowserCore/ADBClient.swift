@@ -940,6 +940,7 @@ public actor ADBClient {
         serial: String,
         windowTitle: String = "ASOP File Browser Phone Control",
         options: ScreenRecordingOptions = ScreenRecordingOptions(),
+        deviceOptions: PhoneControlDeviceOptions = PhoneControlDeviceOptions(),
         placement: ScrcpyWindowPlacement? = nil
     ) async throws -> DetachedLaunchObservation {
         let adbURL = try await workingADBURL()
@@ -949,6 +950,7 @@ public actor ADBClient {
             serial: serial,
             windowTitle: windowTitle,
             options: options,
+            deviceOptions: deviceOptions,
             placement: placement
         )
 
@@ -987,11 +989,36 @@ public actor ADBClient {
         serial: String,
         windowTitle: String,
         options: ScreenRecordingOptions,
+        deviceOptions: PhoneControlDeviceOptions = PhoneControlDeviceOptions(),
         placement: ScrcpyWindowPlacement?
     ) -> [String] {
         var arguments = ["--serial", serial, "--window-title", windowTitle]
         if options.showTouches {
             arguments.append("--show-touches")
+        }
+        if !deviceOptions.wakesDeviceOnOpen {
+            arguments.append("--no-power-on")
+        }
+        if !deviceOptions.capturesAudio {
+            arguments.append("--no-audio")
+        }
+        if !deviceOptions.acceptsInput {
+            arguments.append("--no-control")
+        }
+        if !deviceOptions.synchronizesClipboard {
+            arguments.append("--no-clipboard-autosync")
+        }
+        if deviceOptions.staysAwake {
+            arguments.append("--stay-awake")
+        }
+        if deviceOptions.turnsDeviceScreenOff {
+            arguments.append("--turn-screen-off")
+        }
+        if deviceOptions.frameRateLimit != .automatic {
+            arguments.append(contentsOf: ["--max-fps", "\(deviceOptions.frameRateLimit.rawValue)"])
+        }
+        if deviceOptions.videoCodec != .automatic {
+            arguments.append(contentsOf: ["--video-codec", deviceOptions.videoCodec.rawValue])
         }
         if let maxSize = options.scrcpyMaxSize {
             arguments.append(contentsOf: ["--max-size", "\(maxSize)"])

@@ -5616,7 +5616,8 @@ public final class AppModel: ObservableObject {
               !isStartingScreenRecording,
               !isFinishingScreenRecording else { return }
         isLaunchingScrcpy = true
-        statusMessage = "Opening scrcpy..."
+        let deviceOptions = settings.phoneControlOptions(for: device.serial)
+        statusMessage = "Opening Phone Control..."
         defer {
             isLaunchingScrcpy = false
         }
@@ -5641,13 +5642,24 @@ public final class AppModel: ObservableObject {
             }
             let observation: DetachedLaunchObservation
             do {
+                let preferredPlacement = PhoneControlCompanionWindowPresenter.preferredScrcpyPlacement(
+                    sessionIndex: phoneControlSessions.count
+                )
+                let placement = preferredPlacement.map {
+                    ScrcpyWindowPlacement(
+                        x: $0.x,
+                        y: $0.y,
+                        width: $0.width,
+                        height: $0.height,
+                        alwaysOnTop: deviceOptions.alwaysOnTop
+                    )
+                }
                 observation = try await adb.launchScrcpy(
                     serial: device.serial,
                     windowTitle: phoneControlWindowTitle(for: device),
                     options: options,
-                    placement: PhoneControlCompanionWindowPresenter.preferredScrcpyPlacement(
-                        sessionIndex: phoneControlSessions.count
-                    )
+                    deviceOptions: deviceOptions,
+                    placement: placement
                 )
             } catch {
                 if !sharesRecordingPresentation {
@@ -5983,7 +5995,13 @@ public final class AppModel: ObservableObject {
             statusMessage = "Phone Control disconnected."
             alert = UserAlert(
                 title: "Phone Control Disconnected",
-                message: "Reconnect the phone, approve debugging if asked, and try again."
+                message: "Reconnect the device, approve debugging if asked, and try again.",
+                onDismiss: { [weak self] in
+                    self?.closeDisconnectedPhoneControl(
+                        deviceSerial: session.deviceSerial,
+                        processIdentifier: session.processIdentifier
+                    )
+                }
             )
         } else {
             statusMessage = "Phone Control closed unexpectedly."
@@ -5992,6 +6010,12 @@ public final class AppModel: ObservableObject {
                 message: "Phone Control stopped unexpectedly. Try again or repair Phone Tools in Settings → Tools.\n\nDetails were saved to \(logURL.path)."
             )
         }
+    }
+
+    private func closeDisconnectedPhoneControl(deviceSerial: String, processIdentifier: Int32) {
+        PhoneControlCompanionWindowPresenter.close(deviceSerial: deviceSerial)
+        guard Self.isProcessAlive(processIdentifier) else { return }
+        Darwin.kill(pid_t(processIdentifier), SIGTERM)
     }
 
     private func applyCapturePresentation(revision: Int, options: ScreenRecordingOptions) async {
@@ -7587,14 +7611,21 @@ public struct UserAlert: Identifiable {
     public let id = UUID()
     public let title: String
     public let message: String
+    public let onDismiss: (@MainActor () -> Void)?
 
-    public init(title: String, message: String) {
+    public init(
+        title: String,
+        message: String,
+        onDismiss: (@MainActor () -> Void)? = nil
+    ) {
         self.title = title
         self.message = message
+        self.onDismiss = onDismiss
     }
 
     public init(error: Error) {
         self.title = "Something went wrong"
         self.message = error.localizedDescription
+        self.onDismiss = nil
     }
 }

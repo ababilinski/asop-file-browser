@@ -120,6 +120,19 @@ enum PhoneControlWindowLayout {
         }
         return CGRect(x: x, y: y, width: width, height: companionHeight)
     }
+
+    static func clampedCompanionFrame(_ frame: CGRect, visibleFrame: CGRect) -> CGRect {
+        var frame = frame
+        frame.origin.x = min(
+            max(frame.origin.x, visibleFrame.minX + screenPadding),
+            visibleFrame.maxX - frame.width - screenPadding
+        )
+        frame.origin.y = min(
+            max(frame.origin.y, visibleFrame.minY + screenPadding),
+            visibleFrame.maxY - frame.height - screenPadding
+        )
+        return frame
+    }
 }
 
 @MainActor
@@ -181,6 +194,9 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
     private let panel: NSPanel
     private var trackingTimer: Timer?
     private var hasTrackedScrcpyWindow = false
+    private var companionOffset = CGVector.zero
+    private var lastAutomaticFrame: CGRect?
+    private var lastAppliedTrackedFrame: CGRect?
 
     init(
         model: AppModel,
@@ -209,6 +225,8 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         updateContent()
     }
@@ -233,6 +251,18 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
     func windowWillClose(_ notification: Notification) {
         trackingTimer?.invalidate()
         trackingTimer = nil
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let automaticFrame = lastAutomaticFrame else { return }
+        if let lastAppliedTrackedFrame,
+           panel.frame.nearlyEquals(lastAppliedTrackedFrame) {
+            return
+        }
+        companionOffset = CGVector(
+            dx: panel.frame.minX - automaticFrame.minX,
+            dy: panel.frame.minY - automaticFrame.minY
+        )
     }
 
     private func updateContent() {
@@ -267,11 +297,18 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
             lhs.frame.intersection(phoneFrame).area < rhs.frame.intersection(phoneFrame).area
         } ?? NSScreen.main
         guard let screen else { return }
-        let targetFrame = PhoneControlWindowLayout.companionFrame(
+        let automaticFrame = PhoneControlWindowLayout.companionFrame(
             for: phoneFrame,
             visibleFrame: screen.visibleFrame
         )
+        lastAutomaticFrame = automaticFrame
+        let offsetFrame = automaticFrame.offsetBy(dx: companionOffset.dx, dy: companionOffset.dy)
+        let targetFrame = PhoneControlWindowLayout.clampedCompanionFrame(
+            offsetFrame,
+            visibleFrame: screen.visibleFrame
+        )
         if !panel.frame.nearlyEquals(targetFrame) {
+            lastAppliedTrackedFrame = targetFrame
             panel.setFrame(targetFrame, display: true)
         }
         if !panel.isVisible {
@@ -308,7 +345,6 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
 
         let matches = windowInfo.compactMap { info -> (CGRect, Bool)? in
             guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == processIdentifier,
-                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let quartzFrame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   quartzFrame.width > 150,
@@ -340,6 +376,8 @@ private struct PhoneControlCompanionBar: View {
     var body: some View {
         LiquidGlassContainer(spacing: 8) {
             HStack(spacing: 10) {
+                dragHandle
+
                 Button {
                     model.showPhoneControl(deviceSerial: session.deviceSerial)
                 } label: {
@@ -413,9 +451,21 @@ private struct PhoneControlCompanionBar: View {
         .preferredColorScheme(model.settings.appearanceMode.colorScheme)
     }
 
+    private var dragHandle: some View {
+        Capsule(style: .continuous)
+            .fill(Color.secondary.opacity(0.55))
+            .frame(width: 4, height: 28)
+            .frame(width: 12, height: 40)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
+            .help("Drag to move the controls")
+            .accessibilityLabel("Drag to move the controls")
+    }
+
     private var deviceSummary: some View {
         HStack(spacing: 8) {
-            Image(systemName: "iphone.gen3")
+            Image(systemName: "rectangle.connected.to.line.below")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 1) {

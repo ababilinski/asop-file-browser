@@ -67,7 +67,11 @@ public struct RootView: View {
             }
         }
         .alert(item: $model.alert) { alert in
-            Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"), action: { alert.onDismiss?() })
+            )
         }
         .sheet(isPresented: $model.pendingNewFolder) {
             NameEntrySheet(title: "New Folder", defaultValue: "Untitled Folder") { name in
