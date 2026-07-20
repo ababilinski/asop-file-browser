@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedOn": "2026-07-11",
+  "reviewedOn": "2026-07-20",
   "website": {
     "copyrightHolder": "Adrian Babilinski",
     "copyrightStartYear": 2026
@@ -15,15 +15,15 @@
   },
   "managedToolchain": {
     "scrcpy": {
-      "version": "4.0",
-      "tag": "v4.0",
-      "releaseURL": "https://github.com/Genymobile/scrcpy/releases/tag/v4.0",
+      "version": "4.1",
+      "tag": "v4.1",
+      "releaseURL": "https://github.com/Genymobile/scrcpy/releases/tag/v4.1",
       "sourceURL": "https://github.com/Genymobile/scrcpy",
-      "licenseFile": "ThirdPartyLicenses/scrcpy-4.0-LICENSE.txt",
+      "licenseFile": "ThirdPartyLicenses/scrcpy-4.1-LICENSE.txt",
       "licenseSHA256": "94a6c1cf7fbd8ea80542192d4a7ea6aea5859284c2a4873d396e1060718fa251",
       "upstreamLicenseSHA256": "01c12035bf35af37241298dc7ad538eb2a07e5c940437bc6876feeaa9d1951d0",
-      "versionMarker": "scrcpy 4.0",
-      "serverSHA256": "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a"
+      "versionMarker": "scrcpy 4.1",
+      "serverSHA256": "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
     },
     "adb": {
       "version": "37.0.0",
@@ -38,19 +38,19 @@
     "archives": [
       {
         "architecture": "aarch64",
-        "assetName": "scrcpy-macos-aarch64-v4.0.tar.gz",
-        "directoryName": "scrcpy-macos-aarch64-v4.0",
-        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-aarch64-v4.0.tar.gz",
-        "archiveSHA256": "f5167fe047fe4a2ae2c2ea8634c7145a4d64d0b6005f24bb45639a965b8c60d4",
-        "scrcpyExecutableSHA256": "38895166923325d6c1f9d1ba782230e0a5743e9ff7e0b13f319174409bd57b0a"
+        "assetName": "scrcpy-macos-aarch64-v4.1.tar.gz",
+        "directoryName": "scrcpy-macos-aarch64-v4.1",
+        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-aarch64-v4.1.tar.gz",
+        "archiveSHA256": "20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3",
+        "scrcpyExecutableSHA256": "e318a04c11986d9afa7f438a81cc9c7cc0f3ea66945db1e127f373eb02f4e1d3"
       },
       {
         "architecture": "x86_64",
-        "assetName": "scrcpy-macos-x86_64-v4.0.tar.gz",
-        "directoryName": "scrcpy-macos-x86_64-v4.0",
-        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-x86_64-v4.0.tar.gz",
-        "archiveSHA256": "b83169f856d7022ed0e4428d98acea18dde2d63f49611b52ea137577ce4efe6b",
-        "scrcpyExecutableSHA256": "7e82056a6dbf1eebc0fadf9715f285c041fa90ea197b15d91db535b2c3af27bd"
+        "assetName": "scrcpy-macos-x86_64-v4.1.tar.gz",
+        "directoryName": "scrcpy-macos-x86_64-v4.1",
+        "downloadURL": "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-x86_64-v4.1.tar.gz",
+        "archiveSHA256": "ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72",
+        "scrcpyExecutableSHA256": "3f2c348954c2b19be55def5b72b9d3274dfe5eddee99a060e0d7469f7b3ef159"
       }
     ]
   }

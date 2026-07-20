@@ -6,9 +6,9 @@ File Transfer Mode does not need ADB or scrcpy. Debugging features use ADB. Phon
 
 ## Install ADB
 
-In **Settings → Tools**, set the ADB source to **Managed Copy**, then choose **Download**. This stores the official scrcpy 4.0 macOS package in Application Support. That package includes ADB 37.0.0 and the matching Phone Control files. It does not need Homebrew, Terminal, or an administrator password.
+In **Settings → Tools**, set the ADB source to **Managed Copy**, then choose **Download**. This stores the official scrcpy 4.1 macOS package in Application Support. That package includes ADB 37.0.0 and the matching Phone Control files. It does not need Homebrew, Terminal, or an administrator password.
 
-The app downloads directly from the [official scrcpy 4.0 release](https://github.com/Genymobile/scrcpy/releases/tag/v4.0) and verifies the architecture-specific SHA-256 checksum published in the [official macOS instructions](https://github.com/Genymobile/scrcpy/blob/v4.0/doc/macos.md) before extracting anything.
+The app downloads directly from the [official scrcpy 4.1 release](https://github.com/Genymobile/scrcpy/releases/tag/v4.1) and verifies its architecture-specific SHA-256 checksum before extracting anything.
 
 You can also install ADB yourself:
 

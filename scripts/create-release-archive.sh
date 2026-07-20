@@ -26,7 +26,13 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VALIDATOR="$ROOT/scripts/validate-app-bundle.sh"
-ARCHIVE_NAME="ASOP-File-Browser-$VERSION-macOS.zip"
+RELEASE_ARTIFACT_SUFFIX="${RELEASE_ARTIFACT_SUFFIX:-}"
+if [[ -n "$RELEASE_ARTIFACT_SUFFIX" && ! "$RELEASE_ARTIFACT_SUFFIX" =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "RELEASE_ARTIFACT_SUFFIX may contain only letters, numbers, and hyphens." >&2
+  exit 2
+fi
+SUFFIX="${RELEASE_ARTIFACT_SUFFIX:+-$RELEASE_ARTIFACT_SUFFIX}"
+ARCHIVE_NAME="ASOP-File-Browser-$VERSION-macOS$SUFFIX.zip"
 CHECKSUM_NAME="$ARCHIVE_NAME.sha256"
 
 mkdir -p "$OUTPUT_DIRECTORY"

@@ -19,29 +19,29 @@ public struct ManagedToolchainRelease: Sendable, Equatable {
         switch machineArchitecture {
         case "arm64", "arm64e", "aarch64":
             return Self(
-                version: "4.0",
+                version: "4.1",
                 architecture: "aarch64",
-                archiveURL: URL(string: "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-aarch64-v4.0.tar.gz")!,
-                archiveDirectoryName: "scrcpy-macos-aarch64-v4.0",
-                archiveSHA256: "f5167fe047fe4a2ae2c2ea8634c7145a4d64d0b6005f24bb45639a965b8c60d4",
+                archiveURL: URL(string: "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-aarch64-v4.1.tar.gz")!,
+                archiveDirectoryName: "scrcpy-macos-aarch64-v4.1",
+                archiveSHA256: "20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3",
                 adbSHA256: "9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8dc7",
-                scrcpySHA256: "38895166923325d6c1f9d1ba782230e0a5743e9ff7e0b13f319174409bd57b0a",
-                scrcpyServerSHA256: "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a",
+                scrcpySHA256: "e318a04c11986d9afa7f438a81cc9c7cc0f3ea66945db1e127f373eb02f4e1d3",
+                scrcpyServerSHA256: "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae",
                 adbVersionMarker: "37.0.0-14910828",
-                scrcpyVersionMarker: "scrcpy 4.0"
+                scrcpyVersionMarker: "scrcpy 4.1"
             )
         case "x86_64", "amd64":
             return Self(
-                version: "4.0",
+                version: "4.1",
                 architecture: "x86_64",
-                archiveURL: URL(string: "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-x86_64-v4.0.tar.gz")!,
-                archiveDirectoryName: "scrcpy-macos-x86_64-v4.0",
-                archiveSHA256: "b83169f856d7022ed0e4428d98acea18dde2d63f49611b52ea137577ce4efe6b",
+                archiveURL: URL(string: "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-x86_64-v4.1.tar.gz")!,
+                archiveDirectoryName: "scrcpy-macos-x86_64-v4.1",
+                archiveSHA256: "ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72",
                 adbSHA256: "9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8dc7",
-                scrcpySHA256: "7e82056a6dbf1eebc0fadf9715f285c041fa90ea197b15d91db535b2c3af27bd",
-                scrcpyServerSHA256: "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a",
+                scrcpySHA256: "3f2c348954c2b19be55def5b72b9d3274dfe5eddee99a060e0d7469f7b3ef159",
+                scrcpyServerSHA256: "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae",
                 adbVersionMarker: "37.0.0-14910828",
-                scrcpyVersionMarker: "scrcpy 4.0"
+                scrcpyVersionMarker: "scrcpy 4.1"
             )
         default:
             throw ToolchainInstallError.unsupportedMac
