@@ -5,6 +5,10 @@ import SwiftUI
 enum PhoneCaptureWindowPresenter {
     private static var panel: NSWindow?
 
+    static var activeScreen: NSScreen? {
+        panel?.screen
+    }
+
     static func show(model: AppModel, mode: PhoneCaptureMode) {
         if let panel {
             panel.title = mode.windowTitle
@@ -137,7 +141,7 @@ enum PhoneCaptureMode: String, CaseIterable, Identifiable {
         switch self {
         case .screenshot: "Choose how the phone should look, then capture it."
         case .recording: "Set up the recording, then start when you are ready."
-        case .phoneControl: "Choose display options before opening scrcpy."
+        case .phoneControl: "Open one device or keep several device windows together."
         }
     }
 
@@ -189,6 +193,10 @@ struct PhoneCaptureControlsView: View {
                         captureActivityCard(activity)
                     } else if !model.hasReadyADBDevice {
                         disconnectedCard
+                    }
+
+                    if mode == .phoneControl, !readyPhoneControlDevices.isEmpty {
+                        phoneControlDevicesCard
                     }
 
                     phoneDisplaySettings
@@ -427,6 +435,70 @@ struct PhoneCaptureControlsView: View {
             in: RoundedRectangle(cornerRadius: 14, style: .continuous),
             fallbackMaterial: .regularMaterial
         )
+    }
+
+    private var phoneControlDevicesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Device Windows", systemImage: "rectangle.on.rectangle.angled")
+                    .font(.headline)
+                Spacer()
+                Text("\(model.phoneControlSessions.count) open")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(readyPhoneControlDevices) { device in
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(device.title)
+                            .font(.callout.weight(.semibold))
+                        if let battery = model.batteryStatuses[device.id] {
+                            Label("\(battery.levelPercent)%", systemImage: battery.symbolName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Connected")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if model.phoneControlSession(for: device.serial) != nil {
+                        Button("Show") {
+                            model.showPhoneControl(deviceSerial: device.serial)
+                        }
+                        .liquidGlassButton()
+                        Button {
+                            model.stopPhoneControl(deviceSerial: device.serial)
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .liquidGlassButton()
+                        .help("Close Phone Control for \(device.title)")
+                        .accessibilityLabel("Close Phone Control for \(device.title)")
+                    } else {
+                        Button("Open") {
+                            Task { await model.launchScrcpy(deviceSerial: device.serial) }
+                        }
+                        .liquidGlassButton()
+                        .disabled(model.isLaunchingScrcpy)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .liquidGlassPanel(
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            fallbackMaterial: .regularMaterial
+        )
+    }
+
+    private var readyPhoneControlDevices: [AndroidDevice] {
+        model.devices.filter { $0.state == .device }
     }
 
     private func captureActivityCard(_ activity: String) -> some View {

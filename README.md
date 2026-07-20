@@ -68,6 +68,7 @@ With Developer Options and USB or Wi-Fi debugging, you can:
 - See a detailed breakdown of your device storage.
 - Install, remove, open, stop, or clear apps.
 - Take screenshots, record the screen, or control the phone from your Mac.
+- Open more than one connected device at a time. Each device gets its own screen and control bar.
 
 [See all Phone Tools](https://ababilinski.github.io/asop-file-browser/phone-tools/)
 

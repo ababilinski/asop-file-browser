@@ -3107,8 +3107,8 @@ private struct AppToolbar: ToolbarContent {
                 }
                 .accessibilityLabel("Phone Control")
                 .accessibilityIdentifier("toolbar-phone-control")
-                .accessibilityHint("Choose Phone Control settings and open scrcpy.")
-                .toolbarHoverHelp("Phone Control: configure and open scrcpy for the connected phone.")
+                .accessibilityHint("Choose Phone Control settings and open the connected device.")
+                .toolbarHoverHelp("Phone Control: open and control the connected device in its own window.")
                 .contextMenu {
                     Button("Phone Control Settings...") {
                         model.showPhoneControlSettings()

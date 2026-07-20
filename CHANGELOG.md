@@ -6,6 +6,11 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 
 ## [Unreleased]
 
+### Added
+
+- Open Phone Control for multiple connected devices at once, with a separate
+  battery and shortcut bar for each device window.
+
 ## [1.0.0] - 2026-07-17
 
 ### Added

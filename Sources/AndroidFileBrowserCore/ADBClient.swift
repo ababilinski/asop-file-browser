@@ -938,34 +938,19 @@ public actor ADBClient {
 
     public func launchScrcpy(
         serial: String,
+        windowTitle: String = "ASOP File Browser Phone Control",
         options: ScreenRecordingOptions = ScreenRecordingOptions(),
         placement: ScrcpyWindowPlacement? = nil
     ) async throws -> DetachedLaunchObservation {
         let adbURL = try await workingADBURL()
         let scrcpyCandidates = try locator.resolutionCandidates(for: .scrcpy)
 
-        var arguments = ["--serial", serial, "--window-title", "ASOP File Browser Phone Control"]
-        if options.showTouches {
-            arguments.append("--show-touches")
-        }
-        if let maxSize = options.scrcpyMaxSize {
-            arguments.append(contentsOf: ["--max-size", "\(maxSize)"])
-        }
-        arguments.append(contentsOf: ["--video-bit-rate", "\(options.effectiveVideoBitRateMbps)M"])
-        if let packageName = options.normalizedPackageName {
-            arguments.append(contentsOf: ["--start-app", packageName])
-        }
-        if let placement {
-            arguments.append(contentsOf: [
-                "--window-x", "\(placement.x)",
-                "--window-y", "\(placement.y)",
-                "--window-width", "\(placement.width)",
-                "--window-height", "\(placement.height)"
-            ])
-            if placement.alwaysOnTop {
-                arguments.append("--always-on-top")
-            }
-        }
+        let arguments = Self.scrcpyArguments(
+            serial: serial,
+            windowTitle: windowTitle,
+            options: options,
+            placement: placement
+        )
 
         for candidate in scrcpyCandidates {
             guard let serverURL = locator.scrcpyServerURL(for: candidate) else { continue }
@@ -996,6 +981,37 @@ public actor ADBClient {
             return observation
         }
         throw FileOperationError.toolUnavailable(.scrcpy, "Phone Control is incomplete or cannot run on this Mac.")
+    }
+
+    nonisolated static func scrcpyArguments(
+        serial: String,
+        windowTitle: String,
+        options: ScreenRecordingOptions,
+        placement: ScrcpyWindowPlacement?
+    ) -> [String] {
+        var arguments = ["--serial", serial, "--window-title", windowTitle]
+        if options.showTouches {
+            arguments.append("--show-touches")
+        }
+        if let maxSize = options.scrcpyMaxSize {
+            arguments.append(contentsOf: ["--max-size", "\(maxSize)"])
+        }
+        arguments.append(contentsOf: ["--video-bit-rate", "\(options.effectiveVideoBitRateMbps)M"])
+        if let packageName = options.normalizedPackageName {
+            arguments.append(contentsOf: ["--start-app", packageName])
+        }
+        if let placement {
+            arguments.append(contentsOf: [
+                "--window-x", "\(placement.x)",
+                "--window-y", "\(placement.y)",
+                "--window-width", "\(placement.width)",
+                "--window-height", "\(placement.height)"
+            ])
+            if placement.alwaysOnTop {
+                arguments.append("--always-on-top")
+            }
+        }
+        return arguments
     }
 
     public func startScreenRecording(

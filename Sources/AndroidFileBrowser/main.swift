@@ -273,6 +273,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func finishTermination(model: AppModel, sender: NSApplication, emptyTrash: Bool) {
         isFinishingTermination = true
+        model.stopAllPhoneControls()
         Task { @MainActor [weak self] in
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: false)

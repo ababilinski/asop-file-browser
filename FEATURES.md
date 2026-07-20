@@ -61,7 +61,9 @@ Phone Tools are available with Developer Options enabled.
 - **Manage apps.** Install an APK; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions.
 - **Take screenshots.** Save a still image of the phone screen to your Mac.
 - **Record the screen.** Start and stop a screen recording from the Mac app.
-- **Control the phone.** Open the phone screen in its own window and use your Mac to control it.
+- **Control one or more devices.** Open a separate live screen for each connected device. Every screen has its own Mac control bar for battery level, navigation, volume, rotation, screenshots, and power.
+
+Projected AI glasses use their Android phone as the host, so Phone Control opens the host phone. A standalone Android device can open directly when it appears as a debugging device.
 
 [Learn how to set up Phone Tools](https://ababilinski.github.io/asop-file-browser/phone-tools/)
 

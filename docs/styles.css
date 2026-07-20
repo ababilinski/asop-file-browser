@@ -1821,6 +1821,13 @@ tbody td {
   color: #a1a1a6;
 }
 
+.control-note {
+  max-width: 42ch;
+  margin: 28px 0 0;
+  color: #a1a1a6;
+  line-height: 1.55;
+}
+
 .phone-control-frame {
   width: min(100%, 450px);
   margin: 0 auto;
