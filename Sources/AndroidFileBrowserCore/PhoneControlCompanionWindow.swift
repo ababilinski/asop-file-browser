@@ -8,6 +8,7 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
     case recentApps
     case volumeDown
     case volumeUp
+    case wake
     case power
     case portrait
     case landscape
@@ -20,6 +21,7 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
         case .recentApps: "Recent Apps"
         case .volumeDown: "Volume Down"
         case .volumeUp: "Volume Up"
+        case .wake: "Wake Display"
         case .power: "Power"
         case .portrait: "Portrait"
         case .landscape: "Landscape"
@@ -34,6 +36,7 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
         case .recentApps: "square.on.square"
         case .volumeDown: "speaker.minus"
         case .volumeUp: "speaker.plus"
+        case .wake: "sun.max"
         case .power: "power"
         case .portrait: "rectangle.portrait"
         case .landscape: "rectangle"
@@ -48,6 +51,7 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
         case .recentApps: "input keyevent 187"
         case .volumeDown: "input keyevent 25"
         case .volumeUp: "input keyevent 24"
+        case .wake: "input keyevent KEYCODE_WAKEUP"
         case .power: "input keyevent 26"
         case .portrait:
             "settings put system accelerometer_rotation 0; settings put system user_rotation 0"
@@ -63,6 +67,7 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
         case .portrait: "Phone Control changed to portrait."
         case .landscape: "Phone Control changed to landscape."
         case .automaticRotation: "Automatic rotation turned on."
+        case .wake: "Wake command sent."
         default: "Sent \(title) to the device."
         }
     }
@@ -70,8 +75,8 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
 
 enum PhoneControlWindowLayout {
     static let companionHeight: CGFloat = 66
-    static let companionMinimumWidth: CGFloat = 640
-    static let companionMaximumWidth: CGFloat = 760
+    static let companionMinimumWidth: CGFloat = 680
+    static let companionMaximumWidth: CGFloat = 800
     static let companionGap: CGFloat = 8
     static let screenPadding: CGFloat = 14
 
@@ -474,6 +479,27 @@ private struct PhoneControlCompanionBar: View {
 
                     if capabilities.supportsBatteryStatus {
                         batteryIndicator
+                    }
+
+                    if capabilities.supportsKeyEvents {
+                        Menu {
+                            Button(PhoneControlShortcut.wake.title, systemImage: PhoneControlShortcut.wake.symbolName) {
+                                Task {
+                                    await model.performPhoneControlShortcut(
+                                        .wake,
+                                        deviceSerial: session.deviceSerial
+                                    )
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "gearshape")
+                                .frame(width: 24, height: 24)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .disabled(!isConnected)
+                        .help("Device Actions")
+                        .accessibilityLabel("Device Actions")
                     }
                 } else if isCheckingCapabilities {
                     ProgressView()

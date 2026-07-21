@@ -120,6 +120,7 @@ final class PhoneControlTests: XCTestCase {
         XCTAssertEqual(PhoneControlShortcut.back.adbCommand, "input keyevent 4")
         XCTAssertEqual(PhoneControlShortcut.home.adbCommand, "input keyevent 3")
         XCTAssertEqual(PhoneControlShortcut.recentApps.adbCommand, "input keyevent 187")
+        XCTAssertEqual(PhoneControlShortcut.wake.adbCommand, "input keyevent KEYCODE_WAKEUP")
         XCTAssertEqual(PhoneControlShortcut.power.adbCommand, "input keyevent 26")
         XCTAssertEqual(
             PhoneControlShortcut.automaticRotation.adbCommand,

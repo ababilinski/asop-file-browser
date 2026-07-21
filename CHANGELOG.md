@@ -15,7 +15,8 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Choose one or more connected displays for screenshots and recordings. Captures
   from multiple devices are combined side by side with black padding.
 - Show only supported actions in each Phone Control bar, with direct screenshot
-  and recording buttons, battery status, and a clear recording indicator.
+  and recording buttons, battery status, a clear recording indicator, and a
+  device-actions menu that can wake the display.
 
 ### Changed
 
@@ -23,6 +24,10 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
   another copy.
 - Treat a slow device response as a temporary command failure instead of opening
   Phone Tools setup.
+- Wake each selected display immediately before screenshots and recordings begin.
+- Remove the short capture warmup from combined recordings so playback starts on content.
+- Keep a display's single static frame visible for the rest of a combined
+  recording instead of failing the side-by-side export.
 
 ## [1.0.0] - 2026-07-17
 

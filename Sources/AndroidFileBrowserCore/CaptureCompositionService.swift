@@ -133,9 +133,13 @@ public actor CaptureCompositionService {
         }
 
         let assets = sources.map { AVURLAsset(url: $0.url) }
+        let frameDuration = CMTime(value: 1, timescale: 30)
+        let startupWarmup = CMTime(value: 3, timescale: 4)
+        let minimumWarmupTrimDuration = CMTime(seconds: 2, preferredTimescale: 600)
         var videoTracks: [AVAssetTrack] = []
         var orientedSizes: [CGSize] = []
         var sourceRanges: [CMTimeRange] = []
+        var sourceTrimDurations: [CMTime] = []
         for asset in assets {
             guard let track = try await asset.loadTracks(withMediaType: .video).first else {
                 throw FileOperationError.commandFailed("A captured recording did not contain video.")
@@ -143,18 +147,40 @@ public actor CaptureCompositionService {
             let naturalSize = try await track.load(.naturalSize)
             let preferredTransform = try await track.load(.preferredTransform)
             let orientedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+            let rawRange = try await track.load(.timeRange)
+            let canTrimWarmup = CMTimeCompare(
+                rawRange.duration,
+                minimumWarmupTrimDuration
+            ) > 0
+            let trimDuration = canTrimWarmup ? startupWarmup : .zero
             videoTracks.append(track)
             orientedSizes.append(CGSize(width: abs(orientedRect.width), height: abs(orientedRect.height)))
-            sourceRanges.append(try await track.load(.timeRange))
+            sourceTrimDurations.append(trimDuration)
+            sourceRanges.append(CMTimeRange(
+                start: CMTimeAdd(rawRange.start, trimDuration),
+                duration: CMTimeSubtract(rawRange.duration, trimDuration)
+            ))
         }
 
         let layout = SideBySideCaptureLayout.make(sourceSizes: orientedSizes)
         let composition = AVMutableComposition()
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = layout.renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.frameDuration = frameDuration
 
         let earliestStart = sources.map(\.startedAt).min() ?? Date()
+        let startOffsets = sources.map {
+            CMTime(
+                seconds: max(0, $0.startedAt.timeIntervalSince(earliestStart)),
+                preferredTimescale: 600
+            )
+        }
+        let timelineDuration = sourceRanges.indices.reduce(CMTime(seconds: 1, preferredTimescale: 600)) {
+            partialResult, index in
+            let duration = sourceRanges[index].duration
+            guard CMTimeCompare(duration, frameDuration) > 0 else { return partialResult }
+            return CMTimeMaximum(partialResult, CMTimeAdd(startOffsets[index], duration))
+        }
         var layerInstructions: [AVVideoCompositionLayerInstruction] = []
         var audioParameters: [AVAudioMixInputParameters] = []
         var endTime = CMTime.zero
@@ -167,12 +193,26 @@ public actor CaptureCompositionService {
                 throw FileOperationError.commandFailed("A video track could not be created.")
             }
             let sourceRange = sourceRanges[index]
-            let startOffset = CMTime(
-                seconds: max(0, sources[index].startedAt.timeIntervalSince(earliestStart)),
-                preferredTimescale: 600
-            )
-            try compositionTrack.insertTimeRange(sourceRange, of: videoTracks[index], at: startOffset)
-            endTime = CMTimeMaximum(endTime, CMTimeAdd(startOffset, sourceRange.duration))
+            let startOffset = startOffsets[index]
+            let holdsSingleFrame = CMTimeCompare(sourceRange.duration, frameDuration) <= 0
+            let insertionRange = holdsSingleFrame
+                ? CMTimeRange(start: sourceRange.start, duration: frameDuration)
+                : sourceRange
+            try compositionTrack.insertTimeRange(insertionRange, of: videoTracks[index], at: startOffset)
+            let displayedDuration: CMTime
+            if holdsSingleFrame {
+                displayedDuration = CMTimeMaximum(
+                    frameDuration,
+                    CMTimeSubtract(timelineDuration, startOffset)
+                )
+                compositionTrack.scaleTimeRange(
+                    CMTimeRange(start: startOffset, duration: frameDuration),
+                    toDuration: displayedDuration
+                )
+            } else {
+                displayedDuration = sourceRange.duration
+            }
+            endTime = CMTimeMaximum(endTime, CMTimeAdd(startOffset, displayedDuration))
 
             let preferredTransform = try await videoTracks[index].load(.preferredTransform)
             let naturalSize = try await videoTracks[index].load(.naturalSize)
@@ -196,12 +236,21 @@ public actor CaptureCompositionService {
                let compositionAudioTrack = composition.addMutableTrack(
                    withMediaType: .audio,
                    preferredTrackID: kCMPersistentTrackID_Invalid
-               ) {
-                let audioRange = try await sourceAudioTrack.load(.timeRange)
-                try compositionAudioTrack.insertTimeRange(audioRange, of: sourceAudioTrack, at: startOffset)
-                let parameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
-                parameters.setVolume(1 / sqrt(Float(sources.count)), at: .zero)
-                audioParameters.append(parameters)
+                ) {
+                let rawAudioRange = try await sourceAudioTrack.load(.timeRange)
+                let trimDuration = sourceTrimDurations[index]
+                let audioRange = CMTimeCompare(rawAudioRange.duration, trimDuration) > 0
+                    ? CMTimeRange(
+                        start: CMTimeAdd(rawAudioRange.start, trimDuration),
+                        duration: CMTimeSubtract(rawAudioRange.duration, trimDuration)
+                    )
+                    : CMTimeRange(start: rawAudioRange.start, duration: .zero)
+                if CMTimeCompare(audioRange.duration, .zero) > 0 {
+                    try compositionAudioTrack.insertTimeRange(audioRange, of: sourceAudioTrack, at: startOffset)
+                    let parameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
+                    parameters.setVolume(1 / sqrt(Float(sources.count)), at: .zero)
+                    audioParameters.append(parameters)
+                }
             }
         }
 

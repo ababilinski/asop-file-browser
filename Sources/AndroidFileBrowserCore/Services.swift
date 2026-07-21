@@ -1024,6 +1024,7 @@ public actor DeviceCaptureService {
     }
 
     public func screenshot(device: AndroidDevice) async throws -> URL {
+        await wakeDisplay(serial: device.serial)
         let result = try await adb.run(["-s", device.serial, "exec-out", "screencap", "-p"], timeout: 20)
         let url = try outputURL(prefix: "Screenshot", extension: "png")
         try result.stdoutData.write(to: url)
@@ -1083,6 +1084,7 @@ public actor DeviceCaptureService {
     }
 
     public func startScreenRecording(device: AndroidDevice, options: ScreenRecordingOptions) async throws -> ADBScreenRecordingProcess {
+        await wakeDisplay(serial: device.serial)
         let remotePath = "/sdcard/AndroidFileBrowserRecording-\(UUID().uuidString).mp4"
         let handle = try await adb.startScreenRecording(
             serial: device.serial,
@@ -1108,6 +1110,15 @@ public actor DeviceCaptureService {
             )
         }
         return handle
+    }
+
+    private func wakeDisplay(serial: String) async {
+        _ = try? await adb.shell(
+            serial: serial,
+            "input keyevent KEYCODE_WAKEUP; sleep 0.2; input keyevent KEYCODE_WAKEUP; sleep 0.2; input keyevent KEYCODE_WAKEUP",
+            allowFailure: true,
+            timeout: 4
+        )
     }
 
     public func finishScreenRecording(

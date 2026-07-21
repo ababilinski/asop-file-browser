@@ -99,6 +99,84 @@ final class CaptureCompositionServiceTests: XCTestCase {
         XCTAssertGreaterThan(duration.seconds, 0.5)
     }
 
+    func testCombiningRecordingsHoldsSingleFrameSourceForTimeline() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "CaptureCompositionStaticVideoTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let movingURL = directory.appending(path: "moving.mov")
+        let singleFrameURL = directory.appending(path: "single-frame.mov")
+        try await writeSolidVideo(
+            size: CGSize(width: 40, height: 80),
+            color: CGColor(red: 1, green: 0, blue: 0, alpha: 1),
+            to: movingURL
+        )
+        try await writeSolidVideo(
+            size: CGSize(width: 80, height: 80),
+            color: CGColor.black,
+            frameCount: 1,
+            to: singleFrameURL
+        )
+
+        let startedAt = Date()
+        let outputURL = try await CaptureCompositionService().combineRecordings([
+            CapturedVideoSource(url: movingURL, startedAt: startedAt),
+            CapturedVideoSource(url: singleFrameURL, startedAt: startedAt)
+        ])
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let asset = AVURLAsset(url: outputURL)
+        let duration = try await asset.load(.duration)
+        XCTAssertGreaterThan(duration.seconds, 0.5)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let tenthFrameTime = CMTime(value: 9, timescale: 30)
+        let tenthFrame = try await generator.image(at: tenthFrameTime).image
+        XCTAssertGreaterThan(tenthFrame.width, 0)
+        XCTAssertGreaterThan(tenthFrame.height, 0)
+    }
+
+    func testCombiningRecordingsSkipsStartupWarmupBeforeTenthFrame() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "CaptureCompositionWarmupTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let warmingURL = directory.appending(path: "warming.mov")
+        let staticURL = directory.appending(path: "static.mov")
+        let red = CGColor(red: 1, green: 0, blue: 0, alpha: 1)
+        try await writeVideo(
+            size: CGSize(width: 40, height: 80),
+            colors: Array(repeating: CGColor.black, count: 8) + Array(repeating: red, count: 20),
+            to: warmingURL
+        )
+        try await writeSolidVideo(
+            size: CGSize(width: 80, height: 80),
+            color: CGColor.black,
+            frameCount: 1,
+            to: staticURL
+        )
+
+        let startedAt = Date()
+        let outputURL = try await CaptureCompositionService().combineRecordings([
+            CapturedVideoSource(url: warmingURL, startedAt: startedAt),
+            CapturedVideoSource(url: staticURL, startedAt: startedAt)
+        ])
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: outputURL))
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let tenthFrame = try await generator.image(at: CMTime(value: 9, timescale: 30)).image
+        let pixel = try pixelRGBA(in: tenthFrame, x: 40, y: 40)
+        XCTAssertGreaterThan(pixel[0], 180)
+        XCTAssertLessThan(pixel[1], 60)
+        XCTAssertLessThan(pixel[2], 60)
+    }
+
     private func writeSolidImage(size: CGSize, color: CGColor, to url: URL) throws {
         guard let context = CGContext(
             data: nil,
@@ -129,6 +207,23 @@ final class CaptureCompositionServiceTests: XCTestCase {
     }
 
     private func writeSolidVideo(size: CGSize, color: CGColor, to url: URL) async throws {
+        try await writeSolidVideo(size: size, color: color, frameCount: 10, to: url)
+    }
+
+    private func writeSolidVideo(
+        size: CGSize,
+        color: CGColor,
+        frameCount: Int,
+        to url: URL
+    ) async throws {
+        try await writeVideo(
+            size: size,
+            colors: Array(repeating: color, count: frameCount),
+            to: url
+        )
+    }
+
+    private func writeVideo(size: CGSize, colors: [CGColor], to url: URL) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(
             mediaType: .video,
@@ -150,7 +245,7 @@ final class CaptureCompositionServiceTests: XCTestCase {
         guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         writer.startSession(atSourceTime: .zero)
 
-        for frameIndex in 0..<10 {
+        for (frameIndex, color) in colors.enumerated() {
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(for: .milliseconds(5))
             }
@@ -190,5 +285,25 @@ final class CaptureCompositionServiceTests: XCTestCase {
         guard writer.status == .completed else {
             throw writer.error ?? CocoaError(.fileWriteUnknown)
         }
+    }
+
+    private func pixelRGBA(in image: CGImage, x: Int, y: Int) throws -> [UInt8] {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(
+            data: &pixel,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        context.draw(
+            image,
+            in: CGRect(x: -x, y: -y, width: image.width, height: image.height)
+        )
+        return pixel
     }
 }
