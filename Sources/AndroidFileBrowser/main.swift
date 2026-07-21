@@ -15,7 +15,7 @@ struct AndroidFileBrowserApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("ASOP File Browser", id: "main") {
             RootView(model: model)
                 .frame(minWidth: 1120, minHeight: 720)
                 .preferredColorScheme(settings.appearanceMode.colorScheme)
@@ -216,6 +216,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        sender.activate(ignoringOtherApps: true)
+        if !flag {
+            sender.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        }
+        return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

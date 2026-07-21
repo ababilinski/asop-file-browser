@@ -15,6 +15,11 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Choose one or more connected displays for screenshots and recordings. Captures
   from multiple devices are combined side by side with black padding.
 
+### Changed
+
+- Opening the app again brings its existing window forward instead of starting
+  another copy.
+
 ## [1.0.0] - 2026-07-17
 
 ### Added

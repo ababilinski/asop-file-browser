@@ -183,6 +183,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <string>$APP_BUILD</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_MACOS_VERSION</string>
+  <key>LSMultipleInstancesProhibited</key>
+  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>

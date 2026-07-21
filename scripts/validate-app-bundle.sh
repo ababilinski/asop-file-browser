@@ -121,6 +121,8 @@ plist_value() {
   || fail "Unexpected bundle package type."
 [[ "$(plist_value LSMinimumSystemVersion)" == "15.0" ]] \
   || fail "The app must keep macOS 15.0 as its minimum system version."
+[[ "$(plist_value LSMultipleInstancesProhibited)" == "true" ]] \
+  || fail "The app must prohibit multiple running instances."
 
 if [[ -n "$EXPECTED_VERSION" ]]; then
   [[ "$(plist_value CFBundleShortVersionString)" == "$EXPECTED_VERSION" ]] \
