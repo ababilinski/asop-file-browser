@@ -127,6 +127,18 @@ final class PhoneControlTests: XCTestCase {
         )
     }
 
+    func testCapabilityProbeOnlyEnablesReportedControls() {
+        let capabilities = PhoneControlCapabilities.detected(
+            fromProbeOutput: "input\nscreencap\ndumpsys\n"
+        )
+
+        XCTAssertTrue(capabilities.supportsKeyEvents)
+        XCTAssertFalse(capabilities.supportsRotation)
+        XCTAssertTrue(capabilities.supportsScreenshots)
+        XCTAssertFalse(capabilities.supportsScreenRecording)
+        XCTAssertTrue(capabilities.supportsBatteryStatus)
+    }
+
     private func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
             return nil

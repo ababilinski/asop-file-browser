@@ -70,6 +70,8 @@ enum PhoneControlShortcut: String, CaseIterable, Sendable {
 
 enum PhoneControlWindowLayout {
     static let companionHeight: CGFloat = 66
+    static let companionMinimumWidth: CGFloat = 640
+    static let companionMaximumWidth: CGFloat = 760
     static let companionGap: CGFloat = 8
     static let screenPadding: CGFloat = 14
 
@@ -110,7 +112,10 @@ enum PhoneControlWindowLayout {
 
     static func companionFrame(for phoneFrame: CGRect, visibleFrame: CGRect) -> CGRect {
         let availableWidth = max(320, visibleFrame.width - (screenPadding * 2))
-        let width = min(max(phoneFrame.width, 520), min(660, availableWidth))
+        let width = min(
+            max(phoneFrame.width, companionMinimumWidth),
+            min(companionMaximumWidth, availableWidth)
+        )
         var x = phoneFrame.midX - (width / 2)
         x = min(max(x, visibleFrame.minX + screenPadding), visibleFrame.maxX - width - screenPadding)
 
@@ -318,13 +323,22 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
 
     private static func initialCompanionFrame(for placement: ScrcpyWindowPlacement?) -> CGRect {
         guard let screen = PhoneCaptureWindowPresenter.activeScreen ?? NSApp.mainWindow?.screen ?? NSScreen.main else {
-            return CGRect(x: 100, y: 100, width: 520, height: PhoneControlWindowLayout.companionHeight)
+            return CGRect(
+                x: 100,
+                y: 100,
+                width: PhoneControlWindowLayout.companionMinimumWidth,
+                height: PhoneControlWindowLayout.companionHeight
+            )
         }
         guard let placement else {
+            let width = min(
+                PhoneControlWindowLayout.companionMinimumWidth,
+                max(320, screen.visibleFrame.width - (PhoneControlWindowLayout.screenPadding * 2))
+            )
             return CGRect(
-                x: screen.visibleFrame.midX - 260,
+                x: screen.visibleFrame.midX - (width / 2),
                 y: screen.visibleFrame.minY + PhoneControlWindowLayout.screenPadding,
-                width: 520,
+                width: width,
                 height: PhoneControlWindowLayout.companionHeight
             )
         }
@@ -370,8 +384,10 @@ private final class PhoneControlCompanionWindowController: NSObject, NSWindowDel
 }
 
 private struct PhoneControlCompanionBar: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var model: AppModel
     let session: PhoneControlSession
+    @State private var recordingPulse = false
 
     var body: some View {
         LiquidGlassContainer(spacing: 8) {
@@ -386,44 +402,85 @@ private struct PhoneControlCompanionBar: View {
                 .buttonStyle(.plain)
                 .help("Bring \(session.deviceTitle) to the front")
 
-                Divider()
-                    .frame(height: 28)
+                if let capabilities {
+                    if capabilities.supportsKeyEvents {
+                        Divider()
+                            .frame(height: 28)
 
-                shortcutButton(.back)
-                shortcutButton(.home)
-                shortcutButton(.recentApps)
+                        shortcutButton(.back)
+                        shortcutButton(.home)
+                        shortcutButton(.recentApps)
 
-                Divider()
-                    .frame(height: 28)
+                        Divider()
+                            .frame(height: 28)
 
-                shortcutButton(.volumeDown)
-                shortcutButton(.volumeUp)
+                        shortcutButton(.volumeDown)
+                        shortcutButton(.volumeUp)
+                    }
 
-                Menu {
-                    rotationButton(.automaticRotation)
-                    Divider()
-                    rotationButton(.portrait)
-                    rotationButton(.landscape)
-                } label: {
-                    Image(systemName: "rectangle.2.swap")
+                    if capabilities.supportsRotation {
+                        Menu {
+                            rotationButton(.automaticRotation)
+                            Divider()
+                            rotationButton(.portrait)
+                            rotationButton(.landscape)
+                        } label: {
+                            Image(systemName: "rectangle.2.swap")
+                                .frame(width: 24, height: 24)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .help("Rotation")
+                        .accessibilityLabel("Rotation")
+                    }
+
+                    if capabilities.supportsScreenshots {
+                        Button {
+                            Task { await model.captureScreenshotWithOptions(deviceSerial: session.deviceSerial) }
+                        } label: {
+                            Image(systemName: "camera")
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!isConnected || model.isCapturingScreenshot || model.screenRecordingSession != nil)
+                        .help("Take a screenshot")
+                        .accessibilityLabel("Take a screenshot")
+                    }
+
+                    if capabilities.supportsScreenRecording {
+                        Button {
+                            Task { await model.togglePhoneControlRecording(deviceSerial: session.deviceSerial) }
+                        } label: {
+                            if isStartingThisRecording || isSavingThisRecording {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 24, height: 24)
+                            } else {
+                                Image(systemName: isRecording ? "stop.circle.fill" : "record.circle")
+                                    .symbolRenderingMode(.hierarchical)
+                                    .foregroundStyle(isRecording ? Color.red : Color.primary)
+                                    .frame(width: 24, height: 24)
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(recordingButtonIsDisabled)
+                        .help(isRecording ? "Stop and save this recording" : "Start recording this display")
+                        .accessibilityLabel(isRecording ? "Stop recording" : "Start recording")
+                    }
+
+                    if capabilities.supportsKeyEvents {
+                        shortcutButton(.power)
+                    }
+
+                    if capabilities.supportsBatteryStatus {
+                        batteryIndicator
+                    }
+                } else if isCheckingCapabilities {
+                    ProgressView()
+                        .controlSize(.small)
                         .frame(width: 24, height: 24)
+                        .help("Checking available controls")
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help("Rotation")
-                .accessibilityLabel("Rotation")
-
-                Button {
-                    Task { await model.captureScreenshotWithOptions(deviceSerial: session.deviceSerial) }
-                } label: {
-                    Image(systemName: "camera")
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.borderless)
-                .help("Take a screenshot")
-                .accessibilityLabel("Take a screenshot")
-
-                shortcutButton(.power)
 
                 Button {
                     model.stopPhoneControl(deviceSerial: session.deviceSerial)
@@ -443,12 +500,24 @@ private struct PhoneControlCompanionBar: View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    .stroke(
+                        isRecording
+                            ? Color.red.opacity(recordingPulse ? 0.95 : 0.38)
+                            : Color.primary.opacity(0.12),
+                        lineWidth: isRecording ? 2 : 1
+                    )
+                    .shadow(
+                        color: isRecording ? Color.red.opacity(recordingPulse ? 0.45 : 0.12) : .clear,
+                        radius: isRecording ? 5 : 0
+                    )
                     .allowsHitTesting(false)
             }
         }
         .padding(4)
         .preferredColorScheme(model.settings.appearanceMode.colorScheme)
+        .onAppear { updateRecordingPulse() }
+        .onChange(of: isRecording) { _, _ in updateRecordingPulse() }
+        .onChange(of: accessibilityReduceMotion) { _, _ in updateRecordingPulse() }
     }
 
     private var dragHandle: some View {
@@ -472,7 +541,9 @@ private struct PhoneControlCompanionBar: View {
                 Text(session.deviceTitle)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                batterySummary
+                Text(isRecording ? "Recording" : (isConnected ? "Connected" : "Disconnected"))
+                    .font(.caption2)
+                    .foregroundStyle(isRecording ? Color.red : (isConnected ? Color.secondary : Color.red))
             }
         }
         .frame(minWidth: 112, alignment: .leading)
@@ -480,16 +551,62 @@ private struct PhoneControlCompanionBar: View {
     }
 
     @ViewBuilder
-    private var batterySummary: some View {
+    private var batteryIndicator: some View {
         if let battery = model.batteryStatuses[session.deviceSerial] {
             Label("\(battery.levelPercent)%", systemImage: battery.symbolName)
                 .font(.caption2)
                 .foregroundStyle(battery.isCharging ? Color.green : Color.secondary)
-        } else {
-            Text(isConnected ? "Connected" : "Disconnected")
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.thinMaterial, in: Capsule(style: .continuous))
+                .help(battery.statusLabel)
+                .accessibilityLabel("Battery \(battery.levelPercent) percent, \(battery.statusLabel)")
+        } else if isConnected {
+            Image(systemName: "battery.0")
                 .font(.caption2)
-                .foregroundStyle(isConnected ? Color.secondary : Color.red)
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .help("Battery status unavailable")
+                .accessibilityLabel("Battery status unavailable")
         }
+    }
+
+    private var capabilityState: PhoneControlCapabilityState? {
+        model.phoneControlCapabilityState(for: session.deviceSerial)
+    }
+
+    private var capabilities: PhoneControlCapabilities? {
+        guard case .available(let capabilities) = capabilityState else { return nil }
+        return capabilities
+    }
+
+    private var isCheckingCapabilities: Bool {
+        guard case .checking = capabilityState else { return false }
+        return true
+    }
+
+    private var isRecording: Bool {
+        model.isScreenRecording(deviceSerial: session.deviceSerial)
+    }
+
+    private var isStartingThisRecording: Bool {
+        model.isStartingScreenRecording
+            && model.screenRecordingRequestDeviceSerial == session.deviceSerial
+    }
+
+    private var isSavingThisRecording: Bool {
+        isRecording && model.isFinishingScreenRecording
+    }
+
+    private var recordingButtonIsDisabled: Bool {
+        if isRecording {
+            return model.isFinishingScreenRecording
+        }
+        return !isConnected
+            || model.isStartingScreenRecording
+            || model.isFinishingScreenRecording
+            || model.isCapturingScreenshot
+            || model.screenRecordingSession != nil
     }
 
     private var isConnected: Bool {
@@ -512,6 +629,23 @@ private struct PhoneControlCompanionBar: View {
     private func rotationButton(_ shortcut: PhoneControlShortcut) -> some View {
         Button(shortcut.title, systemImage: shortcut.symbolName) {
             Task { await model.performPhoneControlShortcut(shortcut, deviceSerial: session.deviceSerial) }
+        }
+    }
+
+    private func updateRecordingPulse() {
+        if !isRecording {
+            withAnimation(.easeOut(duration: 0.18)) {
+                recordingPulse = false
+            }
+            return
+        }
+        if accessibilityReduceMotion {
+            recordingPulse = true
+            return
+        }
+        recordingPulse = false
+        withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+            recordingPulse = true
         }
     }
 }

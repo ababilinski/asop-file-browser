@@ -1783,6 +1783,49 @@ public struct PhoneControlSession: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct PhoneControlCapabilities: Equatable, Sendable {
+    public let supportsKeyEvents: Bool
+    public let supportsRotation: Bool
+    public let supportsScreenshots: Bool
+    public let supportsScreenRecording: Bool
+    public let supportsBatteryStatus: Bool
+
+    public init(
+        supportsKeyEvents: Bool,
+        supportsRotation: Bool,
+        supportsScreenshots: Bool,
+        supportsScreenRecording: Bool,
+        supportsBatteryStatus: Bool
+    ) {
+        self.supportsKeyEvents = supportsKeyEvents
+        self.supportsRotation = supportsRotation
+        self.supportsScreenshots = supportsScreenshots
+        self.supportsScreenRecording = supportsScreenRecording
+        self.supportsBatteryStatus = supportsBatteryStatus
+    }
+
+    static func detected(fromProbeOutput output: String) -> PhoneControlCapabilities {
+        let commands = Set(
+            output
+                .split(whereSeparator: \Character.isWhitespace)
+                .map { $0.lowercased() }
+        )
+        return PhoneControlCapabilities(
+            supportsKeyEvents: commands.contains("input"),
+            supportsRotation: commands.contains("settings"),
+            supportsScreenshots: commands.contains("screencap"),
+            supportsScreenRecording: commands.contains("screenrecord"),
+            supportsBatteryStatus: commands.contains("dumpsys")
+        )
+    }
+}
+
+public enum PhoneControlCapabilityState: Equatable, Sendable {
+    case checking
+    case available(PhoneControlCapabilities)
+    case unavailable
+}
+
 struct ArchiveCreationRequest: Identifiable, Hashable, Sendable {
     let id = UUID()
     let defaultName: String

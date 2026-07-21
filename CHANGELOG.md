@@ -14,11 +14,15 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
   options, and allow each control bar to be repositioned.
 - Choose one or more connected displays for screenshots and recordings. Captures
   from multiple devices are combined side by side with black padding.
+- Show only supported actions in each Phone Control bar, with direct screenshot
+  and recording buttons, battery status, and a clear recording indicator.
 
 ### Changed
 
 - Opening the app again brings its existing window forward instead of starting
   another copy.
+- Treat a slow device response as a temporary command failure instead of opening
+  Phone Tools setup.
 
 ## [1.0.0] - 2026-07-17
 

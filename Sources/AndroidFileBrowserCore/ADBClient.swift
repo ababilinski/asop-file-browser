@@ -852,7 +852,7 @@ public actor ADBClient {
             throw CancellationError()
         } catch is ADBCommandTimedOut {
             clearCachedADBResolution()
-            throw FileOperationError.toolUnavailable(.adb, "ADB took too long to respond.")
+            throw FileOperationError.commandFailed("ADB took too long to respond.")
         } catch {
             clearCachedADBResolution()
             throw FileOperationError.toolUnavailable(.adb, "macOS could not open the selected copy.")

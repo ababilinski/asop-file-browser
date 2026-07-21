@@ -1009,6 +1009,20 @@ public actor DeviceCaptureService {
         self.adb = adb
     }
 
+    public func phoneControlCapabilities(device: AndroidDevice) async throws -> PhoneControlCapabilities {
+        let command = "for tool in input settings screencap screenrecord dumpsys; do if [ -x /system/bin/$tool ]; then echo $tool; fi; done"
+        let result = try await adb.shell(
+            serial: device.serial,
+            command,
+            allowFailure: true,
+            timeout: 6
+        )
+        guard result.exitCode == 0 else {
+            throw FileOperationError.commandFailed("Available controls could not be checked.")
+        }
+        return PhoneControlCapabilities.detected(fromProbeOutput: result.stdout)
+    }
+
     public func screenshot(device: AndroidDevice) async throws -> URL {
         let result = try await adb.run(["-s", device.serial, "exec-out", "screencap", "-p"], timeout: 20)
         let url = try outputURL(prefix: "Screenshot", extension: "png")

@@ -181,6 +181,7 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var isCapturingScreenshot = false
     @Published public private(set) var isLaunchingScrcpy = false
     @Published public private(set) var isStartingScreenRecording = false
+    @Published public private(set) var screenRecordingRequestDeviceSerial: String?
     @Published public private(set) var isFinishingScreenRecording = false
     @Published public private(set) var isApplyingCapturePresentation = false
     @Published public var screenshotOptions = ScreenRecordingOptions()
@@ -190,6 +191,7 @@ public final class AppModel: ObservableObject {
     @Published public var recordingCaptureDeviceSerials: Set<String> = []
     @Published public private(set) var screenRecordingSession: ScreenRecordingSession?
     @Published public private(set) var phoneControlSessions: [PhoneControlSession] = []
+    @Published public private(set) var phoneControlCapabilityStates: [String: PhoneControlCapabilityState] = [:]
     @Published public private(set) var captureAppChoices: [AndroidPackage] = []
     @Published public private(set) var isLoadingCaptureApps = false
     @Published var activePhoneCapturePopoverMode: PhoneCaptureMode?
@@ -401,7 +403,11 @@ public final class AppModel: ObservableObject {
             case FileOperationError.missingTool(let name):
                 self.presentToolSetup(tool: ToolchainTool(rawValue: name.lowercased()) ?? .adb, force: true)
             case FileOperationError.toolUnavailable(let tool, let reason):
-                self.presentToolSetup(tool: tool, issue: reason, force: true)
+                if self.isTransientToolTimeout(tool: tool, reason: reason) {
+                    self.presentTransientToolTimeout(reason)
+                } else {
+                    self.presentToolSetup(tool: tool, issue: reason, force: true)
+                }
             default:
                 break
             }
@@ -425,6 +431,14 @@ public final class AppModel: ObservableObject {
 
     public func phoneControlSession(for deviceSerial: String) -> PhoneControlSession? {
         phoneControlSessions.first { $0.deviceSerial == deviceSerial }
+    }
+
+    public func phoneControlCapabilityState(for deviceSerial: String) -> PhoneControlCapabilityState? {
+        phoneControlCapabilityStates[deviceSerial]
+    }
+
+    public func isScreenRecording(deviceSerial: String) -> Bool {
+        screenRecordingSession?.deviceSerials.contains(deviceSerial) == true
     }
 
     public var hasReadyADBDevice: Bool {
@@ -5629,7 +5643,7 @@ public final class AppModel: ObservableObject {
         requestScreenRecording()
     }
 
-    public func startScreenRecording() async {
+    public func startScreenRecording(deviceSerial: String? = nil) async {
         guard screenRecordingSession == nil,
               !isCapturingScreenshot,
               !isLaunchingScrcpy,
@@ -5637,13 +5651,15 @@ public final class AppModel: ObservableObject {
               !isFinishingScreenRecording else { return }
 
         isStartingScreenRecording = true
+        screenRecordingRequestDeviceSerial = deviceSerial
         statusMessage = "Preparing screen recording..."
         defer {
             isStartingScreenRecording = false
+            screenRecordingRequestDeviceSerial = nil
         }
 
         do {
-            let captureDevices = captureDevices(for: .recording)
+            let captureDevices = captureDevices(for: .recording, explicitSerial: deviceSerial)
             guard !captureDevices.isEmpty else { throw FileOperationError.noDevice }
             try await adb.validateADB()
             let options = normalizedCaptureOptions(screenRecordingOptions)
@@ -5770,6 +5786,22 @@ public final class AppModel: ObservableObject {
         await finishScreenRecording(interrupt: true)
     }
 
+    public func togglePhoneControlRecording(deviceSerial: String) async {
+        guard phoneControlSession(for: deviceSerial) != nil else { return }
+        if isScreenRecording(deviceSerial: deviceSerial) {
+            await stopScreenRecording()
+            return
+        }
+        if let session = screenRecordingSession {
+            alert = UserAlert(
+                title: "Recording Already in Progress",
+                message: "Stop the recording of \(session.deviceTitle) before starting another one."
+            )
+            return
+        }
+        await startScreenRecording(deviceSerial: deviceSerial)
+    }
+
     public func launchScrcpy(deviceSerial: String? = nil) async {
         guard let device = deviceSerial.flatMap({ serial in devices.first { $0.serial == serial } }) ?? selectedDevice else {
             handleADBConnectionFailure()
@@ -5855,7 +5887,11 @@ public final class AppModel: ObservableObject {
                 force: true
             )
         } catch FileOperationError.toolUnavailable(let tool, let reason) {
-            presentToolSetup(tool: tool, issue: reason, resumeAction: .phoneControl, force: true)
+            if isTransientToolTimeout(tool: tool, reason: reason) {
+                presentTransientToolTimeout(reason)
+            } else {
+                presentToolSetup(tool: tool, issue: reason, resumeAction: .phoneControl, force: true)
+            }
         } catch {
             alert = UserAlert(title: "Phone Control Couldn't Open", message: "Phone Control could not start. Try again or repair Phone Tools in Settings → Tools.")
             statusMessage = "Phone Control could not open."
@@ -6122,6 +6158,7 @@ public final class AppModel: ObservableObject {
         phoneControlRestorePlans[device.serial] = restorePlan
         phoneControlSessions.removeAll { $0.deviceSerial == device.serial }
         phoneControlSessions.append(session)
+        phoneControlCapabilityStates[device.serial] = .checking
         startScrcpyForegrounding(processIdentifier: observation.processIdentifier)
         PhoneControlCompanionWindowPresenter.show(
             model: self,
@@ -6129,7 +6166,10 @@ public final class AppModel: ObservableObject {
             windowTitle: phoneControlWindowTitle(for: device)
         )
         Task { @MainActor [weak self] in
-            await self?.refreshBatteryStatus(for: device)
+            guard let self else { return }
+            async let battery: Void = self.refreshBatteryStatus(for: device)
+            async let capabilities: Void = self.refreshPhoneControlCapabilities(for: device)
+            _ = await (battery, capabilities)
         }
 
         let processHandle = observation.processHandle
@@ -6154,6 +6194,7 @@ public final class AppModel: ObservableObject {
         let stopWasRequested = phoneControlStopRequests.remove(session.deviceSerial) != nil
         let restorePlan = phoneControlRestorePlans.removeValue(forKey: session.deviceSerial)
         phoneControlSessions.removeAll { $0.processIdentifier == processIdentifier }
+        phoneControlCapabilityStates[session.deviceSerial] = nil
         phoneControlMonitorTasks[session.deviceSerial] = nil
         PhoneControlCompanionWindowPresenter.close(deviceSerial: session.deviceSerial)
 
@@ -6226,6 +6267,20 @@ public final class AppModel: ObservableObject {
         PhoneControlCompanionWindowPresenter.close(deviceSerial: deviceSerial)
         guard Self.isProcessAlive(processIdentifier) else { return }
         Darwin.kill(pid_t(processIdentifier), SIGTERM)
+    }
+
+    private func refreshPhoneControlCapabilities(for device: AndroidDevice) async {
+        guard phoneControlSession(for: device.serial) != nil else { return }
+        do {
+            let capabilities = try await captureService.phoneControlCapabilities(device: device)
+            guard phoneControlSession(for: device.serial) != nil else { return }
+            phoneControlCapabilityStates[device.serial] = .available(capabilities)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard phoneControlSession(for: device.serial) != nil else { return }
+            phoneControlCapabilityStates[device.serial] = .unavailable
+        }
     }
 
     private func applyCapturePresentation(revision: Int, options: ScreenRecordingOptions) async {
@@ -7117,10 +7172,14 @@ public final class AppModel: ObservableObject {
             }
             presentToolSetup(tool: ToolchainTool(rawValue: tool.lowercased()) ?? .adb, force: true)
         case FileOperationError.toolUnavailable(let tool, let reason):
-            if tool == .adb {
-                adbRuntimeIssue = reason
+            if isTransientToolTimeout(tool: tool, reason: reason) {
+                presentTransientToolTimeout(reason)
+            } else {
+                if tool == .adb {
+                    adbRuntimeIssue = reason
+                }
+                presentToolSetup(tool: tool, issue: reason, force: true)
             }
-            presentToolSetup(tool: tool, issue: reason, force: true)
         default:
             alert = UserAlert(error: error)
             statusMessage = error.localizedDescription
@@ -7537,6 +7596,9 @@ public final class AppModel: ObservableObject {
 
     private func commandFailureTitle(for message: String) -> String {
         let lowercased = message.lowercased()
+        if lowercased.contains("took too long") {
+            return "Device Didn’t Respond"
+        }
         if lowercased.contains("permission denied") {
             return "Folder Unavailable"
         }
@@ -7548,10 +7610,25 @@ public final class AppModel: ObservableObject {
 
     private func commandFailureMessage(for message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.localizedCaseInsensitiveContains("took too long") {
+            return "The device did not respond in time. It may still finish the change. Wait a moment, then try again."
+        }
         if trimmed.localizedCaseInsensitiveContains("permission denied") {
             return "\(trimmed)\n\nAndroid blocked access to this location. Shared storage folders are usually available; protected app-private folders may require a debuggable app, root, or a different access method."
         }
         return trimmed.isEmpty ? "Android did not return an error message." : trimmed
+    }
+
+    private func isTransientToolTimeout(tool: ToolchainTool, reason: String) -> Bool {
+        tool == .adb && reason.localizedCaseInsensitiveContains("took too long")
+    }
+
+    private func presentTransientToolTimeout(_ reason: String) {
+        alert = UserAlert(
+            title: commandFailureTitle(for: reason),
+            message: commandFailureMessage(for: reason)
+        )
+        statusMessage = "The device did not respond in time."
     }
 
     private func scrcpyFailureMessage(for message: String) -> String {
