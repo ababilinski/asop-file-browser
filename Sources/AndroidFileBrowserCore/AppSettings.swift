@@ -763,8 +763,8 @@ public struct SettingsView: View {
                 .padding(.leading, 48)
 
             SettingsToggleRow(
-                title: "Screenshot setup",
-                detail: "Show appearance and demo mode before taking a screenshot.",
+                title: "Screenshot options",
+                detail: "Show appearance and demo options below the display selector.",
                 symbol: "camera",
                 isOn: $settings.showScreenshotSetup
             )
@@ -773,8 +773,8 @@ public struct SettingsView: View {
                 .padding(.leading, 48)
 
             SettingsToggleRow(
-                title: "Recording setup",
-                detail: "Show recording, video, appearance, touch, and demo settings before recording.",
+                title: "Recording options",
+                detail: "Show recording, video, appearance, touch, and demo options below the display selector.",
                 symbol: "record.circle",
                 isOn: $settings.showRecordingSetup
             )

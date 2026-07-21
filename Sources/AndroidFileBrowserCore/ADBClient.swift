@@ -64,9 +64,7 @@ public final class ADBScreenRecordingProcess: @unchecked Sendable {
     private let process: Process
     private let logHandle: FileHandle
     private let closeLock = NSLock()
-    private let waitLock = NSLock()
     private var didCloseLog = false
-    private var cachedTerminationStatus: Int32?
 
     init(serial: String, remotePath: String, startedAt: Date, logURL: URL, process: Process, logHandle: FileHandle) {
         self.serial = serial
@@ -95,19 +93,33 @@ public final class ADBScreenRecordingProcess: @unchecked Sendable {
         process.terminate()
     }
 
-    public func waitUntilExit() -> Int32 {
-        waitLock.lock()
-        if let cachedTerminationStatus {
-            waitLock.unlock()
-            return cachedTerminationStatus
+    public func waitUntilExit(timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(max(timeout, 0))
+        while process.isRunning,
+              Self.isProcessAlive(process.processIdentifier),
+              Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
         }
-        process.waitUntilExit()
-        let terminationStatus = process.terminationStatus
-        cachedTerminationStatus = terminationStatus
-        waitLock.unlock()
 
+        if process.isRunning, Self.isProcessAlive(process.processIdentifier) {
+            process.terminate()
+            let terminationDeadline = Date().addingTimeInterval(1)
+            while process.isRunning,
+                  Self.isProcessAlive(process.processIdentifier),
+                  Date() < terminationDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        let exited = !process.isRunning || !Self.isProcessAlive(process.processIdentifier)
         closeLog()
-        return terminationStatus
+        return exited
+    }
+
+    private static func isProcessAlive(_ processIdentifier: Int32) -> Bool {
+        guard processIdentifier > 0 else { return false }
+        if Darwin.kill(pid_t(processIdentifier), 0) == 0 { return true }
+        return errno != ESRCH
     }
 
     private func closeLog() {

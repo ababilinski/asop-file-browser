@@ -28,6 +28,18 @@ private struct LocalUploadRequest: Sendable {
     }
 }
 
+private struct PreparedCaptureDevice {
+    let device: AndroidDevice
+    let restorePlan: ScreenRecordingRestorePlan
+    let shouldRestoreAfterCapture: Bool
+}
+
+private struct ScreenRecordingLaunchOutcome: @unchecked Sendable {
+    let device: AndroidDevice
+    let handle: ADBScreenRecordingProcess?
+    let errorMessage: String?
+}
+
 private struct FileHistoryFolder {
     let parent: String
     let name: String
@@ -174,6 +186,8 @@ public final class AppModel: ObservableObject {
     @Published public var screenshotOptions = ScreenRecordingOptions()
     @Published public var screenRecordingOptions = ScreenRecordingOptions()
     @Published public var phoneControlOptions = ScreenRecordingOptions()
+    @Published public var screenshotCaptureDeviceSerials: Set<String> = []
+    @Published public var recordingCaptureDeviceSerials: Set<String> = []
     @Published public private(set) var screenRecordingSession: ScreenRecordingSession?
     @Published public private(set) var phoneControlSessions: [PhoneControlSession] = []
     @Published public private(set) var captureAppChoices: [AndroidPackage] = []
@@ -257,6 +271,7 @@ public final class AppModel: ObservableObject {
     private let fileRepository: AndroidFileRepository
     private let appManager: AppManagerService
     private let captureService: DeviceCaptureService
+    private let captureCompositionService: CaptureCompositionService
     private let thumbnailService: ThumbnailService
     private let thumbnailRequestScheduler = ADBThumbnailRequestScheduler(maximumConcurrentRequests: 1)
     private let cacheStore: AppCacheStore
@@ -280,8 +295,8 @@ public final class AppModel: ObservableObject {
     private var usbTransferManagerCancellable: AnyCancellable?
     private var delayedTransferPresentationTasks: [UUID: Task<Void, Never>] = [:]
     private var presentedDelayedTransferJobIDs = Set<UUID>()
-    private var screenRecordingHandle: ADBScreenRecordingProcess?
-    private var screenRecordingRestorePlan: ScreenRecordingRestorePlan?
+    private var screenRecordingHandles: [String: ADBScreenRecordingProcess] = [:]
+    private var screenRecordingRestorePlans: [String: ScreenRecordingRestorePlan] = [:]
     private var screenRecordingMonitorTask: Task<Void, Never>?
     private var phoneControlRestorePlans: [String: ScreenRecordingRestorePlan] = [:]
     private var phoneControlMonitorTasks: [String: Task<Void, Never>] = [:]
@@ -362,6 +377,7 @@ public final class AppModel: ObservableObject {
         self.fileRepository = AndroidFileRepository(adb: adb, scanner: scanner)
         self.appManager = AppManagerService(adb: adb)
         self.captureService = DeviceCaptureService(adb: adb)
+        self.captureCompositionService = CaptureCompositionService()
         self.thumbnailService = ThumbnailService()
         self.sidebarSelection = .location(Self.defaultQuickLocations[0])
         self.trashRecords = existingTrashRecords
@@ -5454,15 +5470,56 @@ public final class AppModel: ObservableObject {
     private func shouldShowPhoneCaptureSetup(for mode: PhoneCaptureMode) -> Bool {
         switch mode {
         case .screenshot:
-            return settings.showScreenshotSetup || isCapturingScreenshot
+            return true
         case .recording:
-            return settings.showRecordingSetup
-                || screenRecordingSession != nil
-                || isStartingScreenRecording
-                || isFinishingScreenRecording
+            return true
         case .phoneControl:
             return settings.showPhoneControlSetup || isLaunchingScrcpy
         }
+    }
+
+    func selectedCaptureDeviceSerials(for mode: PhoneCaptureMode) -> Set<String> {
+        let readyDevices = devices.filter { $0.state == .device }
+        let readySerials = Set(readyDevices.map(\.serial))
+        let storedSerials: Set<String>
+        switch mode {
+        case .screenshot:
+            storedSerials = screenshotCaptureDeviceSerials
+        case .recording:
+            storedSerials = recordingCaptureDeviceSerials
+        case .phoneControl:
+            return selectedDevice.map { [$0.serial] } ?? []
+        }
+
+        let validSerials = storedSerials.intersection(readySerials)
+        if !validSerials.isEmpty { return validSerials }
+        if let selectedDevice, selectedDevice.state == .device {
+            return [selectedDevice.serial]
+        }
+        return readyDevices.first.map { [$0.serial] } ?? []
+    }
+
+    func setCaptureDevice(_ serial: String, selected: Bool, for mode: PhoneCaptureMode) {
+        guard mode != .phoneControl else { return }
+        var serials = selectedCaptureDeviceSerials(for: mode)
+        if selected {
+            serials.insert(serial)
+        } else if serials.count > 1 {
+            serials.remove(serial)
+        }
+        switch mode {
+        case .screenshot:
+            screenshotCaptureDeviceSerials = serials
+        case .recording:
+            recordingCaptureDeviceSerials = serials
+        case .phoneControl:
+            break
+        }
+    }
+
+    private func captureDevices(for mode: PhoneCaptureMode, explicitSerial: String? = nil) -> [AndroidDevice] {
+        let serials = explicitSerial.map { Set([$0]) } ?? selectedCaptureDeviceSerials(for: mode)
+        return devices.filter { serials.contains($0.serial) && $0.state == .device }
     }
 
     public func captureScreenshot() async {
@@ -5480,60 +5537,91 @@ public final class AppModel: ObservableObject {
         defer { isCapturingScreenshot = false }
 
         do {
-            guard let device = deviceSerial.flatMap({ serial in devices.first { $0.serial == serial } }) ?? selectedDevice else {
-                throw FileOperationError.noDevice
-            }
+            let captureDevices = captureDevices(for: .screenshot, explicitSerial: deviceSerial)
+            guard !captureDevices.isEmpty else { throw FileOperationError.noDevice }
             try await adb.validateADB()
             var options = normalizedCaptureOptions(screenshotOptions)
             options.showTouches = false
             screenshotOptions = options
-            let recordingRestorePlan = screenRecordingSession?.deviceSerial == device.serial
-                ? screenRecordingRestorePlan
-                : nil
-            let activeRestorePlan = recordingRestorePlan ?? phoneControlRestorePlans[device.serial]
-            let restorePlan: ScreenRecordingRestorePlan
-            let shouldRestoreAfterCapture: Bool
-            if let activeRestorePlan {
-                restorePlan = activeRestorePlan
-                shouldRestoreAfterCapture = false
-                await captureService.applyCapturePresentation(
-                    device: device,
-                    options: options,
-                    restorePlan: activeRestorePlan
-                )
-                await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
-            } else {
-                restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
-                shouldRestoreAfterCapture = true
-            }
-            do {
-                let url = try await captureService.screenshot(device: device)
-                if shouldRestoreAfterCapture {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                } else if phoneControlSession(for: device.serial) != nil {
-                    await reapplyPhoneControlPresentation(
-                        deviceSerial: device.serial,
-                        fallbackRestorePlan: restorePlan
+            var preparedDevices: [PreparedCaptureDevice] = []
+            for device in captureDevices {
+                if let activeRestorePlan = phoneControlRestorePlans[device.serial] {
+                    await captureService.applyCapturePresentation(
+                        device: device,
+                        options: options,
+                        restorePlan: activeRestorePlan
                     )
+                    await captureService.launchCaptureApp(
+                        device: device,
+                        packageName: options.normalizedPackageName
+                    )
+                    preparedDevices.append(PreparedCaptureDevice(
+                        device: device,
+                        restorePlan: activeRestorePlan,
+                        shouldRestoreAfterCapture: false
+                    ))
+                } else {
+                    let restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
+                    preparedDevices.append(PreparedCaptureDevice(
+                        device: device,
+                        restorePlan: restorePlan,
+                        shouldRestoreAfterCapture: true
+                    ))
                 }
-                let previewURL = try await prepareCapturedPreview(url)
+            }
+
+            var restoredPresentation = false
+            do {
+                let captureService = captureService
+                var screenshotURLsBySerial: [String: URL] = [:]
+                try await withThrowingTaskGroup(of: (String, URL).self) { group in
+                    for device in captureDevices {
+                        group.addTask {
+                            (device.serial, try await captureService.screenshot(device: device))
+                        }
+                    }
+                    for try await (serial, url) in group {
+                        screenshotURLsBySerial[serial] = url
+                    }
+                }
+                let orderedURLs = captureDevices.compactMap { screenshotURLsBySerial[$0.serial] }
+                let outputURL = try await captureCompositionService.combineScreenshots(orderedURLs)
+                if orderedURLs.count > 1 {
+                    orderedURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+                }
+                await restoreAfterScreenshot(preparedDevices)
+                restoredPresentation = true
+                let previewURL = try await prepareCapturedPreview(outputURL)
                 PreviewWindowPresenter.show(url: previewURL) { [weak self] in
                     self?.releaseCachedPreviewURL(previewURL)
                 }
-                statusMessage = "Screenshot captured and opened in a preview window."
+                statusMessage = captureDevices.count > 1
+                    ? "Side-by-side screenshot captured and opened in a preview window."
+                    : "Screenshot captured and opened in a preview window."
             } catch {
-                if shouldRestoreAfterCapture {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                } else if phoneControlSession(for: device.serial) != nil {
-                    await reapplyPhoneControlPresentation(
-                        deviceSerial: device.serial,
-                        fallbackRestorePlan: restorePlan
-                    )
+                if !restoredPresentation {
+                    await restoreAfterScreenshot(preparedDevices)
                 }
                 throw error
             }
         } catch {
             handleOperationError(error)
+        }
+    }
+
+    private func restoreAfterScreenshot(_ preparedDevices: [PreparedCaptureDevice]) async {
+        for prepared in preparedDevices {
+            if prepared.shouldRestoreAfterCapture {
+                await captureService.restoreScreenRecordingSettings(
+                    serial: prepared.device.serial,
+                    restorePlan: prepared.restorePlan
+                )
+            } else if phoneControlSession(for: prepared.device.serial) != nil {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: prepared.device.serial,
+                    fallbackRestorePlan: prepared.restorePlan
+                )
+            }
         }
     }
 
@@ -5555,45 +5643,126 @@ public final class AppModel: ObservableObject {
         }
 
         do {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
+            let captureDevices = captureDevices(for: .recording)
+            guard !captureDevices.isEmpty else { throw FileOperationError.noDevice }
             try await adb.validateADB()
             let options = normalizedCaptureOptions(screenRecordingOptions)
             screenRecordingOptions = options
 
-            let restorePlan: ScreenRecordingRestorePlan
-            if let phoneControlRestorePlan = phoneControlRestorePlans[device.serial] {
-                restorePlan = phoneControlRestorePlan
-                await captureService.applyCapturePresentation(
-                    device: device,
-                    options: options,
-                    restorePlan: phoneControlRestorePlan
-                )
-                await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
-            } else {
-                restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
+            var restorePlans: [String: ScreenRecordingRestorePlan] = [:]
+            for device in captureDevices {
+                if let phoneControlRestorePlan = phoneControlRestorePlans[device.serial] {
+                    restorePlans[device.serial] = phoneControlRestorePlan
+                    await captureService.applyCapturePresentation(
+                        device: device,
+                        options: options,
+                        restorePlan: phoneControlRestorePlan
+                    )
+                    await captureService.launchCaptureApp(
+                        device: device,
+                        packageName: options.normalizedPackageName
+                    )
+                } else {
+                    restorePlans[device.serial] = await captureService.prepareScreenRecording(
+                        device: device,
+                        options: options
+                    )
+                }
             }
 
-            do {
-                let handle = try await captureService.startScreenRecording(device: device, options: options)
-                let session = ScreenRecordingSession(
+            let captureService = captureService
+            var outcomes: [ScreenRecordingLaunchOutcome] = []
+            await withTaskGroup(of: ScreenRecordingLaunchOutcome.self) { group in
+                for device in captureDevices {
+                    group.addTask {
+                        do {
+                            let handle = try await captureService.startScreenRecording(
+                                device: device,
+                                options: options
+                            )
+                            return ScreenRecordingLaunchOutcome(
+                                device: device,
+                                handle: handle,
+                                errorMessage: nil
+                            )
+                        } catch {
+                            return ScreenRecordingLaunchOutcome(
+                                device: device,
+                                handle: nil,
+                                errorMessage: error.localizedDescription
+                            )
+                        }
+                    }
+                }
+                for await outcome in group {
+                    outcomes.append(outcome)
+                }
+            }
+
+            let handles = Dictionary(
+                uniqueKeysWithValues: outcomes.compactMap { outcome in
+                    outcome.handle.map { (outcome.device.serial, $0) }
+                }
+            )
+            if let failure = outcomes.first(where: { $0.errorMessage != nil }) {
+                await discardPartiallyStartedRecordings(handles: handles, restorePlans: restorePlans)
+                throw FileOperationError.commandFailed(
+                    failure.errorMessage ?? "A selected display could not start recording."
+                )
+            }
+
+            let deviceSessions = captureDevices.compactMap { device -> ScreenRecordingDeviceSession? in
+                guard let handle = handles[device.serial] else { return nil }
+                return ScreenRecordingDeviceSession(
                     deviceSerial: device.serial,
                     deviceTitle: device.title,
-                    startedAt: handle.startedAt,
-                    options: options
+                    startedAt: handle.startedAt
                 )
-                screenRecordingHandle = handle
-                screenRecordingRestorePlan = restorePlan
-                screenRecordingSession = session
-                statusMessage = "Recording \(device.title)."
-                startScreenRecordingMonitor(sessionID: session.id, handle: handle)
-            } catch {
-                if phoneControlSession(for: device.serial) == nil {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                }
-                throw error
             }
+            let session = ScreenRecordingSession(devices: deviceSessions, options: options)
+            screenRecordingHandles = handles
+            screenRecordingRestorePlans = restorePlans
+            screenRecordingSession = session
+            statusMessage = captureDevices.count > 1
+                ? "Recording \(captureDevices.count) displays."
+                : "Recording \(captureDevices[0].title)."
+            startScreenRecordingMonitor(sessionID: session.id, handles: handles)
+        } catch FileOperationError.commandFailed(let message) where isADBConnectionFailure(message) {
+            handleADBConnectionFailure()
+        } catch FileOperationError.commandFailed(let message) {
+            alert = UserAlert(title: "Recording Couldn't Start", message: message)
+            statusMessage = "Screen recording could not start."
         } catch {
             handleOperationError(error)
+        }
+    }
+
+    private func discardPartiallyStartedRecordings(
+        handles: [String: ADBScreenRecordingProcess],
+        restorePlans: [String: ScreenRecordingRestorePlan]
+    ) async {
+        handles.values.forEach { $0.stop() }
+        for (serial, restorePlan) in restorePlans {
+            if let handle = handles[serial] {
+                let discardedURL = try? await captureService.finishScreenRecording(
+                    handle: handle,
+                    restorePlan: restorePlan
+                )
+                if let discardedURL {
+                    try? FileManager.default.removeItem(at: discardedURL)
+                }
+            } else if phoneControlSession(for: serial) == nil {
+                await captureService.restoreScreenRecordingSettings(
+                    serial: serial,
+                    restorePlan: restorePlan
+                )
+            }
+            if phoneControlSession(for: serial) != nil {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlan
+                )
+            }
         }
     }
 
@@ -5627,14 +5796,16 @@ public final class AppModel: ObservableObject {
             let options = normalizedCaptureOptions(phoneControlOptions)
             phoneControlOptions = options
             let restorePlan: ScreenRecordingRestorePlan
-            let sharesRecordingPresentation = screenRecordingSession?.deviceSerial == device.serial
-                && screenRecordingRestorePlan != nil
-            if sharesRecordingPresentation, let screenRecordingRestorePlan {
-                restorePlan = screenRecordingRestorePlan
+            let recordingRestorePlan = screenRecordingSession?.deviceSerials.contains(device.serial) == true
+                ? screenRecordingRestorePlans[device.serial]
+                : nil
+            let sharesRecordingPresentation = recordingRestorePlan != nil
+            if let recordingRestorePlan {
+                restorePlan = recordingRestorePlan
                 await captureService.applyCapturePresentation(
                     device: device,
                     options: options,
-                    restorePlan: screenRecordingRestorePlan
+                    restorePlan: recordingRestorePlan
                 )
                 await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
             } else {
@@ -5760,11 +5931,21 @@ public final class AppModel: ObservableObject {
     }
 
     public func captureAppSelectionDidChange(options: ScreenRecordingOptions) {
-        guard screenRecordingSession != nil || phoneControlSession != nil,
-              let device = selectedDevice else { return }
+        guard screenRecordingSession != nil || phoneControlSession != nil else { return }
+        let targetDevices: [AndroidDevice]
+        if let screenRecordingSession {
+            let serials = Set(screenRecordingSession.deviceSerials)
+            targetDevices = devices.filter { serials.contains($0.serial) }
+        } else if let selectedDevice {
+            targetDevices = [selectedDevice]
+        } else {
+            targetDevices = []
+        }
         let packageName = options.normalizedPackageName
-        Task { [captureService] in
-            await captureService.launchCaptureApp(device: device, packageName: packageName)
+        Task { [captureService, targetDevices] in
+            for device in targetDevices {
+                await captureService.launchCaptureApp(device: device, packageName: packageName)
+            }
         }
     }
 
@@ -5809,15 +5990,18 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    private func startScreenRecordingMonitor(sessionID: ScreenRecordingSession.ID, handle: ADBScreenRecordingProcess) {
+    private func startScreenRecordingMonitor(
+        sessionID: ScreenRecordingSession.ID,
+        handles: [String: ADBScreenRecordingProcess]
+    ) {
         screenRecordingMonitorTask?.cancel()
         screenRecordingMonitorTask = Task { @MainActor [weak self] in
-            while handle.isRunning {
+            while handles.values.allSatisfy(\.isRunning) {
                 guard !Task.isCancelled else { return }
                 try? await Task.sleep(for: .milliseconds(250))
             }
             guard !Task.isCancelled else { return }
-            await self?.finishScreenRecording(interrupt: false, sessionID: sessionID)
+            await self?.finishScreenRecording(interrupt: true, sessionID: sessionID)
         }
     }
 
@@ -5825,60 +6009,86 @@ public final class AppModel: ObservableObject {
         guard !isFinishingScreenRecording,
               let session = screenRecordingSession,
               sessionID == nil || session.id == sessionID,
-              let handle = screenRecordingHandle else {
+              !screenRecordingHandles.isEmpty else {
             return
         }
 
         isFinishingScreenRecording = true
         beginTrackedOperation()
         defer { endTrackedOperation() }
+        let handles = screenRecordingHandles
         if interrupt {
-            handle.stop()
-            Task.detached(priority: .utility) {
+            handles.values.forEach { $0.stop() }
+            Task.detached(priority: .utility) { [handles] in
                 try? await Task.sleep(for: .seconds(2))
-                if handle.isRunning {
+                for handle in handles.values where handle.isRunning {
                     handle.terminate()
                 }
             }
         }
         statusMessage = "Saving screen recording..."
-        let recordingRestorePlan = screenRecordingRestorePlan
-        let shouldReapplyForPhoneControl = phoneControlSession(for: session.deviceSerial) != nil
+        let restorePlans = screenRecordingRestorePlans
+        let phoneControlSerials = Set(session.deviceSerials.filter { phoneControlSession(for: $0) != nil })
 
+        var sourcesBySerial: [String: CapturedVideoSource] = [:]
         do {
-            let url = try await captureService.finishScreenRecording(
-                handle: handle,
-                restorePlan: recordingRestorePlan
-            )
+            let captureService = captureService
+            try await withThrowingTaskGroup(of: (String, CapturedVideoSource).self) { group in
+                for (serial, handle) in handles {
+                    let restorePlan = restorePlans[serial]
+                    group.addTask {
+                        let url = try await captureService.finishScreenRecording(
+                            handle: handle,
+                            restorePlan: restorePlan
+                        )
+                        return (serial, CapturedVideoSource(url: url, startedAt: handle.startedAt))
+                    }
+                }
+                for try await (serial, source) in group {
+                    sourcesBySerial[serial] = source
+                }
+            }
+            let orderedSources = session.deviceSerials.compactMap { sourcesBySerial[$0] }
+            let url = try await captureCompositionService.combineRecordings(orderedSources)
+            if orderedSources.count > 1 {
+                orderedSources.forEach { try? FileManager.default.removeItem(at: $0.url) }
+            }
             clearScreenRecordingState()
-            if shouldReapplyForPhoneControl {
+            for serial in phoneControlSerials {
                 await reapplyPhoneControlPresentation(
-                    deviceSerial: session.deviceSerial,
-                    fallbackRestorePlan: recordingRestorePlan
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlans[serial]
                 )
             }
             let previewURL = try await prepareCapturedPreview(url)
             PreviewWindowPresenter.show(url: previewURL) { [weak self] in
                 self?.releaseCachedPreviewURL(previewURL)
             }
-            statusMessage = "Screen recording saved and opened in a preview window."
+            statusMessage = session.devices.count > 1
+                ? "Side-by-side recording saved and opened in a preview window."
+                : "Screen recording saved and opened in a preview window."
         } catch {
+            sourcesBySerial.values.forEach { try? FileManager.default.removeItem(at: $0.url) }
             clearScreenRecordingState()
-            if shouldReapplyForPhoneControl {
+            for serial in phoneControlSerials {
                 await reapplyPhoneControlPresentation(
-                    deviceSerial: session.deviceSerial,
-                    fallbackRestorePlan: recordingRestorePlan
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlans[serial]
                 )
             }
-            handleOperationError(error)
+            alert = UserAlert(
+                title: "Recording Couldn't Finish",
+                message: "The selected displays could not be saved together. Make sure each display is connected, awake, and able to record, then try again."
+            )
+            statusMessage = "Screen recording could not be saved."
         }
     }
 
     private func clearScreenRecordingState() {
         screenRecordingMonitorTask?.cancel()
         screenRecordingMonitorTask = nil
-        screenRecordingHandle = nil
-        screenRecordingRestorePlan = nil
+        screenRecordingHandles = [:]
+        screenRecordingRestorePlans = [:]
         screenRecordingSession = nil
         isFinishingScreenRecording = false
         if phoneControlSessions.isEmpty {
@@ -5947,13 +6157,13 @@ public final class AppModel: ObservableObject {
         phoneControlMonitorTasks[session.deviceSerial] = nil
         PhoneControlCompanionWindowPresenter.close(deviceSerial: session.deviceSerial)
 
-        if screenRecordingSession != nil, !isFinishingScreenRecording,
-           screenRecordingSession?.deviceSerial == session.deviceSerial,
+        if screenRecordingSession?.deviceSerials.contains(session.deviceSerial) == true,
+           !isFinishingScreenRecording,
            let device = devices.first(where: { $0.serial == session.deviceSerial }) {
             await captureService.applyCapturePresentation(
                 device: device,
                 options: normalizedCaptureOptions(screenRecordingOptions),
-                restorePlan: screenRecordingRestorePlan ?? restorePlan
+                restorePlan: screenRecordingRestorePlans[session.deviceSerial] ?? restorePlan
             )
         } else if !isFinishingScreenRecording {
             if selectedDevice?.serial == session.deviceSerial {
@@ -6020,23 +6230,32 @@ public final class AppModel: ObservableObject {
 
     private func applyCapturePresentation(revision: Int, options: ScreenRecordingOptions) async {
         guard revision == capturePresentationRevision,
-              let device = selectedDevice,
-              device.state == .device,
               screenRecordingSession != nil || phoneControlSession != nil else {
             return
         }
 
-        let recordingRestorePlan = screenRecordingSession?.deviceSerial == device.serial
-            ? screenRecordingRestorePlan
-            : nil
-        let restorePlan = recordingRestorePlan ?? phoneControlRestorePlans[device.serial]
+        let targetDevices: [AndroidDevice]
+        if let screenRecordingSession {
+            let serials = Set(screenRecordingSession.deviceSerials)
+            targetDevices = devices.filter { serials.contains($0.serial) && $0.state == .device }
+        } else if let selectedDevice, selectedDevice.state == .device {
+            targetDevices = [selectedDevice]
+        } else {
+            targetDevices = []
+        }
+        guard !targetDevices.isEmpty else { return }
+
         let options = normalizedCaptureOptions(options)
         isApplyingCapturePresentation = true
-        await captureService.applyCapturePresentation(
-            device: device,
-            options: options,
-            restorePlan: restorePlan
-        )
+        for device in targetDevices {
+            let restorePlan = screenRecordingRestorePlans[device.serial]
+                ?? phoneControlRestorePlans[device.serial]
+            await captureService.applyCapturePresentation(
+                device: device,
+                options: options,
+                restorePlan: restorePlan
+            )
+        }
         guard revision == capturePresentationRevision else { return }
         isApplyingCapturePresentation = false
         statusMessage = "Updated phone capture settings."

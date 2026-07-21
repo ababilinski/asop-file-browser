@@ -59,8 +59,10 @@ Developer Options adds features that need USB or Wi-Fi debugging.
 Phone Tools are available with Developer Options enabled.
 
 - **Manage apps.** Install an APK; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions.
-- **Take screenshots.** Save a still image of the phone screen to your Mac.
-- **Record the screen.** Start and stop a screen recording from the Mac app.
+- **Take screenshots.** Capture one or more connected displays. Multiple displays
+  are saved side by side in one image.
+- **Record the screen.** Record one or more connected displays. Multiple displays
+  are saved side by side in one video.
 - **Control one or more devices.** Open a separate live screen for each connected device. Every screen has its own Mac control bar for battery level, navigation, volume, rotation, screenshots, and power.
 - **Tune each device window.** Choose audio, input, clipboard, frame rate, video format, screen behavior, and window placement for each connected device.
 

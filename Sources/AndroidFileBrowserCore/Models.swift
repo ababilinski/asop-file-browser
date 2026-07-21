@@ -1625,12 +1625,30 @@ public struct ScreenRecordingOptions: Equatable, Sendable {
     }
 }
 
-public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
-    public let id: UUID
+public struct ScreenRecordingDeviceSession: Identifiable, Equatable, Sendable {
+    public var id: String { deviceSerial }
     public let deviceSerial: String
     public let deviceTitle: String
     public let startedAt: Date
+
+    public init(deviceSerial: String, deviceTitle: String, startedAt: Date) {
+        self.deviceSerial = deviceSerial
+        self.deviceTitle = deviceTitle
+        self.startedAt = startedAt
+    }
+}
+
+public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let devices: [ScreenRecordingDeviceSession]
     public let options: ScreenRecordingOptions
+
+    public var deviceSerial: String { devices.first?.deviceSerial ?? "" }
+    public var deviceSerials: [String] { devices.map(\.deviceSerial) }
+    public var deviceTitle: String {
+        devices.count == 1 ? (devices.first?.deviceTitle ?? "Device") : "\(devices.count) devices"
+    }
+    public var startedAt: Date { devices.map(\.startedAt).min() ?? Date() }
 
     public init(
         id: UUID = UUID(),
@@ -1640,9 +1658,21 @@ public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
         options: ScreenRecordingOptions
     ) {
         self.id = id
-        self.deviceSerial = deviceSerial
-        self.deviceTitle = deviceTitle
-        self.startedAt = startedAt
+        self.devices = [ScreenRecordingDeviceSession(
+            deviceSerial: deviceSerial,
+            deviceTitle: deviceTitle,
+            startedAt: startedAt
+        )]
+        self.options = options
+    }
+
+    public init(
+        id: UUID = UUID(),
+        devices: [ScreenRecordingDeviceSession],
+        options: ScreenRecordingOptions
+    ) {
+        self.id = id
+        self.devices = devices
         self.options = options
     }
 }

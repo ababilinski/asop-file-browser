@@ -1,7 +1,34 @@
+import Foundation
 import XCTest
 @testable import AndroidFileBrowserCore
 
 final class DeviceCaptureServiceTests: XCTestCase {
+    func testScreenRecordingProcessWaitReturnsAfterTheProcessAlreadyExited() throws {
+        let logURL = FileManager.default.temporaryDirectory
+            .appending(path: "ScreenRecordingProcessTests-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: logURL)
+        defer { try? FileManager.default.removeItem(at: logURL) }
+
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/true")
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        try process.run()
+        process.waitUntilExit()
+
+        let handle = ADBScreenRecordingProcess(
+            serial: "test-device",
+            remotePath: "/sdcard/test.mp4",
+            startedAt: Date(),
+            logURL: logURL,
+            process: process,
+            logHandle: logHandle
+        )
+
+        XCTAssertTrue(handle.waitUntilExit(timeout: 0.1))
+    }
+
     func testTargetNightModeUsesRequestedAppearance() {
         XCTAssertEqual(
             DeviceCaptureService.targetNightMode(for: .light, originalNightMode: "yes"),

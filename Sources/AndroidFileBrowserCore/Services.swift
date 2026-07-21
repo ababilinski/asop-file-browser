@@ -1069,14 +1069,31 @@ public actor DeviceCaptureService {
     }
 
     public func startScreenRecording(device: AndroidDevice, options: ScreenRecordingOptions) async throws -> ADBScreenRecordingProcess {
-        let remotePath = "/sdcard/AndroidFileBrowserRecording-\(Int(Date().timeIntervalSince1970)).mp4"
-        return try await adb.startScreenRecording(
+        let remotePath = "/sdcard/AndroidFileBrowserRecording-\(UUID().uuidString).mp4"
+        let handle = try await adb.startScreenRecording(
             serial: device.serial,
             remotePath: remotePath,
             timeLimitSeconds: options.timeLimitSeconds,
             size: options.screenRecordSize,
             bitRateMbps: options.effectiveVideoBitRateMbps
         )
+        try await Task.sleep(for: .milliseconds(350))
+        let startupIssue = recordingStartupIssue(logURL: handle.logURL)
+        guard handle.isRunning, startupIssue == nil else {
+            handle.stop()
+            _ = handle.waitUntilExit(timeout: 0.2)
+            _ = try? await adb.shell(
+                serial: device.serial,
+                "rm -f \(ADBClient.quoteRemote(remotePath))",
+                allowFailure: true,
+                timeout: 8
+            )
+            throw FileOperationError.commandFailed(
+                startupIssue
+                    ?? "A selected display stopped before recording began. Make sure it is connected and awake, then try again."
+            )
+        }
+        return handle
     }
 
     public func finishScreenRecording(
@@ -1084,18 +1101,26 @@ public actor DeviceCaptureService {
         restorePlan: ScreenRecordingRestorePlan?
     ) async throws -> URL {
         _ = await Task.detached(priority: .userInitiated) {
-            handle.waitUntilExit()
+            handle.waitUntilExit(timeout: 5)
         }.value
         try? await Task.sleep(for: .milliseconds(350))
 
         let localDirectory = try captureDirectory()
-        let localURL = localDirectory.appending(path: (handle.remotePath as NSString).lastPathComponent)
+        let remoteName = (handle.remotePath as NSString).lastPathComponent
+        let localURL = localDirectory.appending(path: remoteName)
         do {
-            _ = try await adb.run(["-s", handle.serial, "pull", handle.remotePath, localURL.path])
+            let result = try await adb.run(["-s", handle.serial, "pull", handle.remotePath, localURL.path])
+            let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard result.exitCode == 0, fileSize > 0 else {
+                throw FileOperationError.commandFailed(
+                    "A selected display stopped before its recording could be saved."
+                )
+            }
             await restoreScreenRecordingSettings(serial: handle.serial, restorePlan: restorePlan)
             _ = try? await adb.shell(serial: handle.serial, "rm -f \(ADBClient.quoteRemote(handle.remotePath))", allowFailure: true, timeout: 8)
             return localURL
         } catch {
+            try? FileManager.default.removeItem(at: localURL)
             await restoreScreenRecordingSettings(serial: handle.serial, restorePlan: restorePlan)
             _ = try? await adb.shell(serial: handle.serial, "rm -f \(ADBClient.quoteRemote(handle.remotePath))", allowFailure: true, timeout: 8)
             throw error
@@ -1126,8 +1151,10 @@ public actor DeviceCaptureService {
         let directory = try captureDirectory()
 
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        return directory.appending(path: "\(prefix)-\(formatter.string(from: Date())).\(pathExtension)")
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss-SSS"
+        return directory.appending(
+            path: "\(prefix)-\(formatter.string(from: Date()))-\(UUID().uuidString).\(pathExtension)"
+        )
     }
 
     private func captureDirectory() throws -> URL {
@@ -1140,6 +1167,20 @@ public actor DeviceCaptureService {
         .appending(path: "AndroidFileBrowserCaptures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func recordingStartupIssue(logURL: URL) -> String? {
+        let output = (try? String(contentsOf: logURL, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lowercased = output.lowercased()
+        if lowercased.contains("unassigned_layer_stack")
+            || lowercased.contains("display state") {
+            return "A selected display is not available for recording. Wake it, make sure it is showing content, and try again."
+        }
+        if !output.isEmpty {
+            return "A selected display stopped before recording began. Make sure it is connected and awake, then try again."
+        }
+        return nil
     }
 
     private func systemSetting(serial: String, namespace: String, key: String) async -> String? {

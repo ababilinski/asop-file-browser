@@ -12,6 +12,8 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
   battery and shortcut bar for each device window.
 - Keep Phone Control from waking devices unless enabled, add per-device stream
   options, and allow each control bar to be repositioned.
+- Choose one or more connected displays for screenshots and recordings. Captures
+  from multiple devices are combined side by side with black padding.
 
 ## [1.0.0] - 2026-07-17
 
