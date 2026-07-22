@@ -3089,7 +3089,9 @@ private struct AppToolbar: ToolbarContent {
                 .help("View Layout: switch between List and Icons.")
                 .accessibilityLabel("File Layout")
                 .accessibilityHint("Switch between list and icon file layouts.")
+            }
 
+            if model.showsPhoneCaptureToolbarControls {
                 Button {
                     model.requestScreenshot()
                 } label: {

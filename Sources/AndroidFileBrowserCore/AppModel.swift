@@ -524,6 +524,12 @@ public final class AppModel: ObservableObject {
         hasReadyADBDevice || !usbTransferManager.devices.isEmpty
     }
 
+    var showsPhoneCaptureToolbarControls: Bool {
+        connectionMode == .adb
+            && hasReadyADBDevice
+            && !usbTransferManager.isADBReleasedForMTPSession
+    }
+
     public var shouldShowDetailInspector: Bool {
         showInspector && hasInspectableDeviceSurface
     }
