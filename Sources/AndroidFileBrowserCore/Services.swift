@@ -820,14 +820,18 @@ public actor AndroidFileRepository {
 
 public actor AppManagerService {
     private let adb: ADBClient
+    private let metadataBridge: AppMetadataBridge
+    private let installer: AppPackageInstaller
 
     public init(adb: ADBClient) {
         self.adb = adb
+        self.metadataBridge = AppMetadataBridge(adb: adb)
+        self.installer = AppPackageInstaller(adb: adb)
     }
 
     public func packages(device: AndroidDevice, kind: AppKind) async throws -> [AndroidPackage] {
-        let systemResult = try await adb.shell(serial: device.serial, "pm list packages -f -s")
-        let userResult = try await adb.shell(serial: device.serial, "pm list packages -f -3")
+        let systemResult = try await adb.shell(serial: device.serial, "pm list packages -f -s", timeout: 15)
+        let userResult = try await adb.shell(serial: device.serial, "pm list packages -f -3", timeout: 15)
         let systemPackages = ADBParsers.parsePackages(systemResult.stdout, kind: .system)
         let systemPackageNames = Set(systemPackages.map(\.packageName))
         let userPackages = ADBParsers.parsePackages(userResult.stdout, kind: .user)
@@ -861,18 +865,46 @@ public actor AppManagerService {
         return packageNames.isEmpty ? nil : packageNames
     }
 
+    func presentations(
+        device: AndroidDevice,
+        packages: [AndroidPackage],
+        onBatch: (@Sendable ([String: AndroidAppPresentation]) async throws -> Void)? = nil
+    ) async throws -> [String: AndroidAppPresentation] {
+        try await metadataBridge.presentations(
+            device: device,
+            packages: packages,
+            onBatch: onBatch
+        )
+    }
+
     public func details(device: AndroidDevice, package: AndroidPackage) async throws -> AndroidPackage {
-        let result = try await adb.shell(serial: device.serial, "dumpsys package \(ADBClient.quoteRemote(package.packageName))", allowFailure: true)
+        let result = try await adb.shell(
+            serial: device.serial,
+            "dumpsys package \(ADBClient.quoteRemote(package.packageName))",
+            allowFailure: true,
+            timeout: 12
+        )
         var updated = ADBParsers.parsePackageDetails(package: package, dumpsys: result.stdout)
-        updated.apkSizeBytes = try? await apkSizeBytes(device: device, package: updated)
-        updated.storageStats = try? await storageStats(device: device, package: updated)
-        updated.appStorageLocationSizes = await appStorageLocationSizes(device: device, package: updated)
+        try Task.checkCancellation()
+        do {
+            updated.apkSizeBytes = try await apkSizeBytes(device: device, package: updated)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {}
+        try Task.checkCancellation()
+        do {
+            updated.storageStats = try await storageStats(device: device, package: updated)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {}
+        try Task.checkCancellation()
+        updated.appStorageLocationSizes = try await appStorageLocationSizes(device: device, package: updated)
         return updated
     }
 
     public func runningProcessNames(device: AndroidDevice) async throws -> Set<String> {
         let command = "ps -A -o NAME 2>/dev/null || ps -A 2>/dev/null || ps 2>/dev/null"
-        let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+        let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 10)
         return ADBParsers.parseRunningProcessNames(result.stdout)
     }
 
@@ -936,7 +968,8 @@ public actor AppManagerService {
         let result = try await adb.shell(
             serial: device.serial,
             "stat -c %s \(ADBClient.quoteRemote(apkPath)) 2>/dev/null",
-            allowFailure: true
+            allowFailure: true,
+            timeout: 8
         )
         guard result.exitCode == 0 else { return nil }
         return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -951,7 +984,8 @@ public actor AppManagerService {
         ]
 
         for command in commands {
-            let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+            try Task.checkCancellation()
+            let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 8)
             guard result.exitCode == 0 else { continue }
             if let stats = ADBParsers.parseAppStorageStats(result.stdout) {
                 return stats
@@ -960,15 +994,21 @@ public actor AppManagerService {
         return nil
     }
 
-    private func appStorageLocationSizes(device: AndroidDevice, package: AndroidPackage) async -> [AppStorageLocation.Kind: Int64] {
+    private func appStorageLocationSizes(device: AndroidDevice, package: AndroidPackage) async throws -> [AppStorageLocation.Kind: Int64] {
         var sizes: [AppStorageLocation.Kind: Int64] = [:]
         for location in package.appStorageLocations {
-            guard location.kind != .userData,
-                  let bytes = try? await directorySizeBytesIfVisible(device: device, path: location.path),
-                  bytes > 0 else {
+            try Task.checkCancellation()
+            guard location.kind != .userData else { continue }
+            do {
+                if let bytes = try await directorySizeBytesIfVisible(device: device, path: location.path),
+                   bytes > 0 {
+                    sizes[location.kind] = bytes
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
                 continue
             }
-            sizes[location.kind] = bytes
         }
         return sizes
     }
@@ -976,15 +1016,23 @@ public actor AppManagerService {
     private func directorySizeBytesIfVisible(device: AndroidDevice, path: String) async throws -> Int64? {
         let quoted = ADBClient.quoteRemote(path)
         let command = "if [ -d \(quoted) ]; then du -sk \(quoted) 2>/dev/null | awk '{s += $1} END {printf \"%.0f\", s * 1024}'; fi"
-        let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+        let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 8)
         guard result.exitCode == 0 else { return nil }
         let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return Int64(trimmed)
     }
 
+    public func install(
+        device: AndroidDevice,
+        packageURLs: [URL],
+        options: AppInstallOptions = AppInstallOptions()
+    ) async throws -> AppInstallationResult {
+        try await installer.install(device: device, urls: packageURLs, options: options)
+    }
+
     public func install(device: AndroidDevice, apkURL: URL) async throws {
-        _ = try await adb.run(["-s", device.serial, "install", "-r", apkURL.path])
+        _ = try await install(device: device, packageURLs: [apkURL])
     }
 
     public func uninstall(device: AndroidDevice, packageName: String) async throws {
@@ -1009,7 +1057,22 @@ public actor DeviceCaptureService {
         self.adb = adb
     }
 
+    public func phoneControlCapabilities(device: AndroidDevice) async throws -> PhoneControlCapabilities {
+        let command = "for tool in input settings screencap screenrecord dumpsys; do if [ -x /system/bin/$tool ]; then echo $tool; fi; done"
+        let result = try await adb.shell(
+            serial: device.serial,
+            command,
+            allowFailure: true,
+            timeout: 6
+        )
+        guard result.exitCode == 0 else {
+            throw FileOperationError.commandFailed("Available controls could not be checked.")
+        }
+        return PhoneControlCapabilities.detected(fromProbeOutput: result.stdout)
+    }
+
     public func screenshot(device: AndroidDevice) async throws -> URL {
+        await wakeDisplay(serial: device.serial)
         let result = try await adb.run(["-s", device.serial, "exec-out", "screencap", "-p"], timeout: 20)
         let url = try outputURL(prefix: "Screenshot", extension: "png")
         try result.stdoutData.write(to: url)
@@ -1069,13 +1132,40 @@ public actor DeviceCaptureService {
     }
 
     public func startScreenRecording(device: AndroidDevice, options: ScreenRecordingOptions) async throws -> ADBScreenRecordingProcess {
-        let remotePath = "/sdcard/AndroidFileBrowserRecording-\(Int(Date().timeIntervalSince1970)).mp4"
-        return try await adb.startScreenRecording(
+        await wakeDisplay(serial: device.serial)
+        let remotePath = "/sdcard/AndroidFileBrowserRecording-\(UUID().uuidString).mp4"
+        let handle = try await adb.startScreenRecording(
             serial: device.serial,
             remotePath: remotePath,
             timeLimitSeconds: options.timeLimitSeconds,
             size: options.screenRecordSize,
             bitRateMbps: options.effectiveVideoBitRateMbps
+        )
+        try await Task.sleep(for: .milliseconds(350))
+        let startupIssue = recordingStartupIssue(logURL: handle.logURL)
+        guard handle.isRunning, startupIssue == nil else {
+            handle.stop()
+            _ = handle.waitUntilExit(timeout: 0.2)
+            _ = try? await adb.shell(
+                serial: device.serial,
+                "rm -f \(ADBClient.quoteRemote(remotePath))",
+                allowFailure: true,
+                timeout: 8
+            )
+            throw FileOperationError.commandFailed(
+                startupIssue
+                    ?? "A selected display stopped before recording began. Make sure it is connected and awake, then try again."
+            )
+        }
+        return handle
+    }
+
+    private func wakeDisplay(serial: String) async {
+        _ = try? await adb.shell(
+            serial: serial,
+            "input keyevent KEYCODE_WAKEUP; sleep 0.2; input keyevent KEYCODE_WAKEUP; sleep 0.2; input keyevent KEYCODE_WAKEUP",
+            allowFailure: true,
+            timeout: 4
         )
     }
 
@@ -1084,18 +1174,26 @@ public actor DeviceCaptureService {
         restorePlan: ScreenRecordingRestorePlan?
     ) async throws -> URL {
         _ = await Task.detached(priority: .userInitiated) {
-            handle.waitUntilExit()
+            handle.waitUntilExit(timeout: 5)
         }.value
         try? await Task.sleep(for: .milliseconds(350))
 
         let localDirectory = try captureDirectory()
-        let localURL = localDirectory.appending(path: (handle.remotePath as NSString).lastPathComponent)
+        let remoteName = (handle.remotePath as NSString).lastPathComponent
+        let localURL = localDirectory.appending(path: remoteName)
         do {
-            _ = try await adb.run(["-s", handle.serial, "pull", handle.remotePath, localURL.path])
+            let result = try await adb.run(["-s", handle.serial, "pull", handle.remotePath, localURL.path])
+            let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard result.exitCode == 0, fileSize > 0 else {
+                throw FileOperationError.commandFailed(
+                    "A selected display stopped before its recording could be saved."
+                )
+            }
             await restoreScreenRecordingSettings(serial: handle.serial, restorePlan: restorePlan)
             _ = try? await adb.shell(serial: handle.serial, "rm -f \(ADBClient.quoteRemote(handle.remotePath))", allowFailure: true, timeout: 8)
             return localURL
         } catch {
+            try? FileManager.default.removeItem(at: localURL)
             await restoreScreenRecordingSettings(serial: handle.serial, restorePlan: restorePlan)
             _ = try? await adb.shell(serial: handle.serial, "rm -f \(ADBClient.quoteRemote(handle.remotePath))", allowFailure: true, timeout: 8)
             throw error
@@ -1126,8 +1224,10 @@ public actor DeviceCaptureService {
         let directory = try captureDirectory()
 
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        return directory.appending(path: "\(prefix)-\(formatter.string(from: Date())).\(pathExtension)")
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss-SSS"
+        return directory.appending(
+            path: "\(prefix)-\(formatter.string(from: Date()))-\(UUID().uuidString).\(pathExtension)"
+        )
     }
 
     private func captureDirectory() throws -> URL {
@@ -1140,6 +1240,20 @@ public actor DeviceCaptureService {
         .appending(path: "AndroidFileBrowserCaptures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func recordingStartupIssue(logURL: URL) -> String? {
+        let output = (try? String(contentsOf: logURL, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lowercased = output.lowercased()
+        if lowercased.contains("unassigned_layer_stack")
+            || lowercased.contains("display state") {
+            return "A selected display is not available for recording. Wake it, make sure it is showing content, and try again."
+        }
+        if !output.isEmpty {
+            return "A selected display stopped before recording began. Make sure it is connected and awake, then try again."
+        }
+        return nil
     }
 
     private func systemSetting(serial: String, namespace: String, key: String) async -> String? {

@@ -6,6 +6,8 @@ usage() {
 Usage: validate-release-disk-image.sh DISK_IMAGE_PATH [options]
 
 App validation options are passed to scripts/validate-app-bundle.sh.
+Use --architecture universal, --architecture arm64, or --architecture x86_64
+to validate the matching app executable.
 
 Disk image options:
   --dmg-signed       Require a Developer ID signature on the disk image.
@@ -59,7 +61,7 @@ while [[ $# -gt 0 ]]; do
       APP_VALIDATION_OPTIONS+=("$1" "$2")
       shift 2
       ;;
-    --version|--build)
+    --version|--build|--architecture)
       [[ $# -ge 2 ]] || fail "$1 needs a value."
       APP_VALIDATION_OPTIONS+=("$1" "$2")
       shift 2

@@ -15,7 +15,7 @@ struct AndroidFileBrowserApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("ASOP File Browser", id: "main") {
             RootView(model: model)
                 .frame(minWidth: 1120, minHeight: 720)
                 .preferredColorScheme(settings.appearanceMode.colorScheme)
@@ -112,7 +112,7 @@ struct AndroidFileBrowserApp: App {
             }
 
             CommandGroup(after: .sidebar) {
-                Toggle("Transfer Panel", isOn: Binding(
+                Toggle("Progress Panel", isOn: Binding(
                     get: { model.transferQueue.isPanelExpanded },
                     set: { model.transferQueue.isPanelExpanded = $0 }
                 ))
@@ -218,11 +218,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        sender.activate(ignoringOtherApps: true)
+        if !flag {
+            sender.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isFinishingTermination else { return .terminateLater }
         guard let model else { return .terminateNow }
         guard model.beginTerminationRequest() else {
             presentOperationInProgressAlert()
+            return .terminateCancel
+        }
+        guard confirmClosingPhoneControlWindowsIfNeeded(model: model) else {
+            model.cancelTerminationRequest()
             return .terminateCancel
         }
         if model.shouldAutomaticallyEmptyTrashAtSessionEnd {
@@ -271,8 +286,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func confirmClosingPhoneControlWindowsIfNeeded(model: AppModel) -> Bool {
+        let windowCount = model.phoneControlSessions.count
+        guard windowCount > 0 else { return true }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = windowCount == 1
+            ? "Close Phone Control and quit?"
+            : "Close Phone Control windows and quit?"
+        alert.informativeText = windowCount == 1
+            ? "Closing ASOP File Browser will also close the Phone Control window opened by this app."
+            : "Closing ASOP File Browser will also close the \(windowCount) Phone Control windows opened by this app."
+        alert.addButton(withTitle: "Close Windows and Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     private func finishTermination(model: AppModel, sender: NSApplication, emptyTrash: Bool) {
         isFinishingTermination = true
+        model.stopAllPhoneControls()
         Task { @MainActor [weak self] in
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: false)

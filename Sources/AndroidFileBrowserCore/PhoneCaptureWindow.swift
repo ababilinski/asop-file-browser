@@ -5,6 +5,10 @@ import SwiftUI
 enum PhoneCaptureWindowPresenter {
     private static var panel: NSWindow?
 
+    static var activeScreen: NSScreen? {
+        panel?.screen
+    }
+
     static func show(model: AppModel, mode: PhoneCaptureMode) {
         if let panel {
             panel.title = mode.windowTitle
@@ -135,9 +139,9 @@ enum PhoneCaptureMode: String, CaseIterable, Identifiable {
 
     var setupDetail: String {
         switch self {
-        case .screenshot: "Choose how the phone should look, then capture it."
-        case .recording: "Set up the recording, then start when you are ready."
-        case .phoneControl: "Choose display options before opening scrcpy."
+        case .screenshot: "Choose one or more displays, then capture."
+        case .recording: "Choose one or more displays, then start recording."
+        case .phoneControl: "Open one device or keep several device windows together."
         }
     }
 
@@ -187,13 +191,25 @@ struct PhoneCaptureControlsView: View {
                         }
                     } else if let activity = currentActivity {
                         captureActivityCard(activity)
-                    } else if !model.hasReadyADBDevice {
+                    } else if readyPhoneControlDevices.isEmpty {
                         disconnectedCard
                     }
 
-                    phoneDisplaySettings
-                    selectedSettings
-                    skipSetupControl
+                    if mode != .phoneControl, !readyPhoneControlDevices.isEmpty {
+                        captureDevicesCard
+                    }
+
+                    if mode == .phoneControl, !readyPhoneControlDevices.isEmpty {
+                        phoneControlDevicesCard
+                    }
+
+                    if showsOptionalCaptureSettings {
+                        phoneDisplaySettings
+                        selectedSettings
+                    }
+                    if mode == .phoneControl {
+                        skipSetupControl
+                    }
                     primaryAction
                 }
                 .padding(20)
@@ -223,9 +239,9 @@ struct PhoneCaptureControlsView: View {
     private var popoverHeight: CGFloat {
         switch mode {
         case .screenshot:
-            340
+            settings.showScreenshotSetup ? 500 : 330
         case .recording:
-            460
+            settings.showRecordingSetup ? 600 : 370
         case .phoneControl:
             410
         }
@@ -257,7 +273,17 @@ struct PhoneCaptureControlsView: View {
 
     @ViewBuilder
     private var deviceStatus: some View {
-        if let device = model.selectedDevice, device.state == .device {
+        if mode != .phoneControl {
+            let count = model.selectedCaptureDeviceSerials(for: mode).count
+            Label(
+                count == 1 ? "1 display" : "\(count) displays",
+                systemImage: count > 1 ? "rectangle.on.rectangle" : "display"
+            )
+            .font(.callout.weight(.medium))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .liquidGlassPanel(in: Capsule(), fallbackMaterial: .regularMaterial)
+        } else if let device = model.selectedDevice, device.state == .device {
             HStack(spacing: 7) {
                 Circle()
                     .fill(Color.green)
@@ -429,6 +455,218 @@ struct PhoneCaptureControlsView: View {
         )
     }
 
+    private var phoneControlDevicesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Device Windows", systemImage: "rectangle.on.rectangle.angled")
+                    .font(.headline)
+                Spacer()
+                Text("\(model.phoneControlSessions.count) open")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(readyPhoneControlDevices) { device in
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(device.title)
+                            .font(.callout.weight(.semibold))
+                        if let battery = model.batteryStatuses[device.id] {
+                            Label("\(battery.levelPercent)%", systemImage: battery.symbolName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Connected")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    phoneControlSettingsMenu(for: device)
+                    if model.phoneControlSession(for: device.serial) != nil {
+                        Button("Show") {
+                            model.showPhoneControl(deviceSerial: device.serial)
+                        }
+                        .liquidGlassButton()
+                        Button {
+                            model.stopPhoneControl(deviceSerial: device.serial)
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .liquidGlassButton()
+                        .help("Close Phone Control for \(device.title)")
+                        .accessibilityLabel("Close Phone Control for \(device.title)")
+                    } else {
+                        Button("Open") {
+                            Task { await model.launchScrcpy(deviceSerial: device.serial) }
+                        }
+                        .liquidGlassButton()
+                        .disabled(model.isLaunchingScrcpy)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .liquidGlassPanel(
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            fallbackMaterial: .regularMaterial
+        )
+    }
+
+    private var captureDevicesCard: some View {
+        let selectedSerials = model.selectedCaptureDeviceSerials(for: mode)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Displays", systemImage: "rectangle.on.rectangle")
+                    .font(.headline)
+                Spacer()
+                Text("\(selectedSerials.count) selected")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(readyPhoneControlDevices) { device in
+                Toggle(isOn: captureDeviceBinding(device.serial)) {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.title)
+                                .font(.callout.weight(.semibold))
+                            if let battery = model.batteryStatuses[device.id] {
+                                Label("\(battery.levelPercent)%", systemImage: battery.symbolName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Connected")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .disabled(captureTransitionIsRunning || model.screenRecordingSession != nil)
+            }
+
+            if readyPhoneControlDevices.count > 1 {
+                Text("Select more than one display to create a side-by-side capture.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .liquidGlassPanel(
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            fallbackMaterial: .regularMaterial
+        )
+    }
+
+    private func captureDeviceBinding(_ serial: String) -> Binding<Bool> {
+        Binding(
+            get: { model.selectedCaptureDeviceSerials(for: mode).contains(serial) },
+            set: { model.setCaptureDevice(serial, selected: $0, for: mode) }
+        )
+    }
+
+    private func phoneControlSettingsMenu(for device: AndroidDevice) -> some View {
+        let hasActiveSession = model.phoneControlSession(for: device.serial) != nil
+        return Menu {
+            Toggle(
+                "Wake display when opening",
+                isOn: phoneControlOptionBinding(for: device.serial, \.wakesDeviceOnOpen)
+            )
+            Toggle(
+                "Device audio",
+                isOn: phoneControlOptionBinding(for: device.serial, \.capturesAudio)
+            )
+            Toggle(
+                "Mouse and keyboard input",
+                isOn: phoneControlOptionBinding(for: device.serial, \.acceptsInput)
+            )
+            Toggle(
+                "Clipboard sync",
+                isOn: phoneControlOptionBinding(for: device.serial, \.synchronizesClipboard)
+            )
+
+            Divider()
+
+            Toggle(
+                "Keep device awake while connected",
+                isOn: phoneControlOptionBinding(for: device.serial, \.staysAwake)
+            )
+            Toggle(
+                "Turn device screen off while connected",
+                isOn: phoneControlOptionBinding(for: device.serial, \.turnsDeviceScreenOff)
+            )
+            Toggle(
+                "Keep window above others",
+                isOn: phoneControlOptionBinding(for: device.serial, \.alwaysOnTop)
+            )
+
+            Divider()
+
+            Picker(
+                "Frame Rate",
+                selection: phoneControlOptionBinding(for: device.serial, \.frameRateLimit)
+            ) {
+                ForEach(PhoneControlFrameRateLimit.allCases) { limit in
+                    Text(limit.title).tag(limit)
+                }
+            }
+            Picker(
+                "Video Format",
+                selection: phoneControlOptionBinding(for: device.serial, \.videoCodec)
+            ) {
+                ForEach(PhoneControlVideoCodec.allCases) { codec in
+                    Text(codec.title).tag(codec)
+                }
+            }
+
+            if hasActiveSession {
+                Divider()
+                Text("Changes apply the next time this window opens.")
+            }
+        } label: {
+            Image(systemName: "gearshape")
+                .frame(width: 18, height: 18)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Phone Control settings for \(device.title)")
+        .accessibilityLabel("Phone Control settings for \(device.title)")
+    }
+
+    private func phoneControlOptionBinding<Value>(
+        for deviceSerial: String,
+        _ keyPath: WritableKeyPath<PhoneControlDeviceOptions, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { settings.phoneControlOptions(for: deviceSerial)[keyPath: keyPath] },
+            set: { settings.setPhoneControlOption($0, for: deviceSerial, keyPath: keyPath) }
+        )
+    }
+
+    private var readyPhoneControlDevices: [AndroidDevice] {
+        model.devices.filter { $0.state == .device }
+    }
+
+    private var showsOptionalCaptureSettings: Bool {
+        switch mode {
+        case .screenshot:
+            settings.showScreenshotSetup
+        case .recording:
+            settings.showRecordingSetup
+        case .phoneControl:
+            true
+        }
+    }
+
     private func captureActivityCard(_ activity: String) -> some View {
         HStack(spacing: 12) {
             ProgressView()
@@ -446,7 +684,7 @@ struct PhoneCaptureControlsView: View {
     }
 
     private var disconnectedCard: some View {
-        Label("Connect the phone with ADB to use these controls.", systemImage: "cable.connector.slash")
+        Label("Connect a device with debugging to use these controls.", systemImage: "cable.connector.slash")
             .font(.callout)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -522,7 +760,7 @@ struct PhoneCaptureControlsView: View {
     private var phoneDisplaySettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Label("Phone Display", systemImage: "iphone")
+                Label(displaySettingsTitle, systemImage: displaySettingsSystemImage)
                     .font(.headline)
                 Spacer()
                 if model.isApplyingCapturePresentation {
@@ -572,7 +810,7 @@ struct PhoneCaptureControlsView: View {
     }
 
     private var screenshotActionIsDisabled: Bool {
-        !model.hasReadyADBDevice
+        model.selectedCaptureDeviceSerials(for: .screenshot).isEmpty
             || model.isCapturingScreenshot
             || model.isLaunchingScrcpy
             || model.isStartingScreenRecording
@@ -581,7 +819,7 @@ struct PhoneCaptureControlsView: View {
     }
 
     private var recordingActionIsDisabled: Bool {
-        !model.hasReadyADBDevice
+        model.selectedCaptureDeviceSerials(for: .recording).isEmpty
             || model.isCapturingScreenshot
             || model.isStartingScreenRecording
             || model.isFinishingScreenRecording
@@ -601,6 +839,19 @@ struct PhoneCaptureControlsView: View {
             || model.isLaunchingScrcpy
             || model.isStartingScreenRecording
             || model.isFinishingScreenRecording
+    }
+
+    private var displaySettingsTitle: String {
+        if mode == .phoneControl { return "Device Display" }
+        return model.selectedCaptureDeviceSerials(for: mode).count > 1
+            ? "Selected Displays"
+            : "Device Display"
+    }
+
+    private var displaySettingsSystemImage: String {
+        model.selectedCaptureDeviceSerials(for: mode).count > 1
+            ? "rectangle.on.rectangle"
+            : "display"
     }
 
     private var recordingSettingsAreLocked: Bool {

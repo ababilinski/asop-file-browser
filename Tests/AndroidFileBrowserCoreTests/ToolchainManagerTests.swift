@@ -5,9 +5,9 @@ import XCTest
 final class ToolchainManagerTests: XCTestCase {
     @MainActor
     func testScrcpyVersionDropsTheProjectURL() {
-        let output = "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n"
+        let output = "scrcpy 4.1 <https://github.com/Genymobile/scrcpy>\n"
 
-        XCTAssertEqual(ToolchainManager.shortVersion(for: .scrcpy, output: output), "4.0")
+        XCTAssertEqual(ToolchainManager.shortVersion(for: .scrcpy, output: output), "4.1")
     }
 
     func testAutomaticSelectionPrefersManagedTools() throws {
@@ -78,37 +78,37 @@ final class ToolchainManagerTests: XCTestCase {
     func testOfficialArm64ReleaseManifest() throws {
         let release = try ManagedToolchainRelease.current(machineArchitecture: "arm64")
 
-        XCTAssertEqual(release.version, "4.0")
+        XCTAssertEqual(release.version, "4.1")
         XCTAssertEqual(release.architecture, "aarch64")
         XCTAssertEqual(
             release.archiveURL.absoluteString,
-            "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-aarch64-v4.0.tar.gz"
+            "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-aarch64-v4.1.tar.gz"
         )
-        XCTAssertEqual(release.archiveDirectoryName, "scrcpy-macos-aarch64-v4.0")
-        XCTAssertEqual(release.archiveSHA256, "f5167fe047fe4a2ae2c2ea8634c7145a4d64d0b6005f24bb45639a965b8c60d4")
+        XCTAssertEqual(release.archiveDirectoryName, "scrcpy-macos-aarch64-v4.1")
+        XCTAssertEqual(release.archiveSHA256, "20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3")
         XCTAssertEqual(release.adbSHA256, "9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8dc7")
-        XCTAssertEqual(release.scrcpySHA256, "38895166923325d6c1f9d1ba782230e0a5743e9ff7e0b13f319174409bd57b0a")
-        XCTAssertEqual(release.scrcpyServerSHA256, "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a")
+        XCTAssertEqual(release.scrcpySHA256, "e318a04c11986d9afa7f438a81cc9c7cc0f3ea66945db1e127f373eb02f4e1d3")
+        XCTAssertEqual(release.scrcpyServerSHA256, "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae")
         XCTAssertEqual(release.adbVersionMarker, "37.0.0-14910828")
-        XCTAssertEqual(release.scrcpyVersionMarker, "scrcpy 4.0")
+        XCTAssertEqual(release.scrcpyVersionMarker, "scrcpy 4.1")
     }
 
     func testOfficialX8664ReleaseManifest() throws {
         let release = try ManagedToolchainRelease.current(machineArchitecture: "x86_64")
 
-        XCTAssertEqual(release.version, "4.0")
+        XCTAssertEqual(release.version, "4.1")
         XCTAssertEqual(release.architecture, "x86_64")
         XCTAssertEqual(
             release.archiveURL.absoluteString,
-            "https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-macos-x86_64-v4.0.tar.gz"
+            "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-x86_64-v4.1.tar.gz"
         )
-        XCTAssertEqual(release.archiveDirectoryName, "scrcpy-macos-x86_64-v4.0")
-        XCTAssertEqual(release.archiveSHA256, "b83169f856d7022ed0e4428d98acea18dde2d63f49611b52ea137577ce4efe6b")
+        XCTAssertEqual(release.archiveDirectoryName, "scrcpy-macos-x86_64-v4.1")
+        XCTAssertEqual(release.archiveSHA256, "ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72")
         XCTAssertEqual(release.adbSHA256, "9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8dc7")
-        XCTAssertEqual(release.scrcpySHA256, "7e82056a6dbf1eebc0fadf9715f285c041fa90ea197b15d91db535b2c3af27bd")
-        XCTAssertEqual(release.scrcpyServerSHA256, "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a")
+        XCTAssertEqual(release.scrcpySHA256, "3f2c348954c2b19be55def5b72b9d3274dfe5eddee99a060e0d7469f7b3ef159")
+        XCTAssertEqual(release.scrcpyServerSHA256, "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae")
         XCTAssertEqual(release.adbVersionMarker, "37.0.0-14910828")
-        XCTAssertEqual(release.scrcpyVersionMarker, "scrcpy 4.0")
+        XCTAssertEqual(release.scrcpyVersionMarker, "scrcpy 4.1")
     }
 
     func testChecksumMismatchKeepsExistingInstallAndRemovesStagingDirectory() async throws {
@@ -233,6 +233,20 @@ final class ToolchainManagerTests: XCTestCase {
             XCTAssertEqual(reason, "ADB could not start its connection service.")
         } catch {
             XCTFail("Expected toolUnavailable, received \(error)")
+        }
+    }
+
+    func testADBCommandTimeoutIsAnOperationFailureNotAMissingTool() async throws {
+        let locator = ToolchainLocator(adbOverride: URL(fileURLWithPath: "/tmp/test-adb"))
+        let client = ADBClient(locator: locator, runner: VersionThenSlowRunProcessRunner())
+
+        do {
+            _ = try await client.run(["-s", "device", "shell", "input keyevent 3"], timeout: 0.01)
+            XCTFail("Expected the command to time out")
+        } catch FileOperationError.commandFailed(let message) {
+            XCTAssertEqual(message, "ADB took too long to respond.")
+        } catch {
+            XCTFail("Expected commandFailed, received \(error)")
         }
     }
 
@@ -431,6 +445,41 @@ private struct VersionThenFixedRunProcessRunner: ProcessRunning {
             )
         }
         return result
+    }
+
+    func runStreaming(
+        executable: URL,
+        arguments: [String],
+        output: @escaping @Sendable (Data) -> Void
+    ) async throws -> ADBCommandResult {
+        throw StubProcessError.unexpectedCall
+    }
+
+    func launchDetached(executable: URL, arguments: [String]) async throws {
+        throw StubProcessError.unexpectedCall
+    }
+
+    func launchObserved(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        observationDuration: TimeInterval
+    ) async throws -> DetachedLaunchObservation {
+        throw StubProcessError.unexpectedCall
+    }
+}
+
+private struct VersionThenSlowRunProcessRunner: ProcessRunning {
+    func run(executable: URL, arguments: [String]) async throws -> ADBCommandResult {
+        if arguments == ["version"] {
+            return ADBCommandResult(
+                stdoutData: Data("Android Debug Bridge version 1.0.41\nVersion 37.0.0-test\n".utf8),
+                stderrData: Data(),
+                exitCode: 0
+            )
+        }
+        try await Task.sleep(for: .seconds(1))
+        return ADBCommandResult(stdoutData: Data(), stderrData: Data(), exitCode: 0)
     }
 
     func runStreaming(

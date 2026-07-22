@@ -8,6 +8,7 @@ Usage: validate-app-bundle.sh APP_PATH [options]
 Options:
   --version VERSION             Expected CFBundleShortVersionString.
   --build BUILD                 Expected CFBundleVersion.
+  --architecture ARCHITECTURE   Expected universal, arm64, or x86_64 executable.
   --team-id TEAM_ID             Expected signing team for distribution builds.
   --distribution               Require Developer ID signing and hardened runtime.
   --notarized                  Require a stapled ticket and Gatekeeper acceptance.
@@ -41,6 +42,7 @@ APPROVED_ENTITLEMENTS="$ROOT/Resources/AndroidFileBrowser.entitlements"
 
 EXPECTED_VERSION=""
 EXPECTED_BUILD=""
+EXPECTED_ARCHITECTURE="universal"
 EXPECTED_TEAM_ID=""
 REQUIRE_DISTRIBUTION=false
 REQUIRE_NOTARIZED=false
@@ -57,6 +59,11 @@ while [[ $# -gt 0 ]]; do
     --build)
       [[ $# -ge 2 ]] || fail "--build needs a value."
       EXPECTED_BUILD="$2"
+      shift 2
+      ;;
+    --architecture)
+      [[ $# -ge 2 ]] || fail "--architecture needs a value."
+      EXPECTED_ARCHITECTURE="$2"
       shift 2
       ;;
     --team-id)
@@ -121,6 +128,8 @@ plist_value() {
   || fail "Unexpected bundle package type."
 [[ "$(plist_value LSMinimumSystemVersion)" == "15.0" ]] \
   || fail "The app must keep macOS 15.0 as its minimum system version."
+[[ "$(plist_value LSMultipleInstancesProhibited)" == "true" ]] \
+  || fail "The app must prohibit multiple running instances."
 
 if [[ -n "$EXPECTED_VERSION" ]]; then
   [[ "$(plist_value CFBundleShortVersionString)" == "$EXPECTED_VERSION" ]] \
@@ -132,13 +141,29 @@ if [[ -n "$EXPECTED_BUILD" ]]; then
 fi
 
 ARCHITECTURES="$(/usr/bin/lipo -archs "$EXECUTABLE" 2>/dev/null || true)"
-for required_architecture in arm64 x86_64; do
+case "$EXPECTED_ARCHITECTURE" in
+  universal)
+    REQUIRED_ARCHITECTURES=(arm64 x86_64)
+    ;;
+  arm64)
+    REQUIRED_ARCHITECTURES=(arm64)
+    ;;
+  x86_64)
+    REQUIRED_ARCHITECTURES=(x86_64)
+    ;;
+  *)
+    fail "Expected architecture must be universal, arm64, or x86_64."
+    ;;
+esac
+for required_architecture in "${REQUIRED_ARCHITECTURES[@]}"; do
   [[ " $ARCHITECTURES " == *" $required_architecture "* ]] \
     || fail "Missing $required_architecture executable slice; found: ${ARCHITECTURES:-none}."
 done
+[[ "$(wc -w <<< "$ARCHITECTURES" | tr -d ' ')" -eq "${#REQUIRED_ARCHITECTURES[@]}" ]] \
+  || fail "Unexpected executable slices; found: ${ARCHITECTURES:-none}."
 
 MINIMUM_OS_VALUES="$(/usr/bin/xcrun vtool -show-build "$EXECUTABLE" | /usr/bin/awk '$1 == "minos" { print $2 }')"
-[[ "$(printf '%s\n' "$MINIMUM_OS_VALUES" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')" -eq 2 ]] \
+[[ "$(printf '%s\n' "$MINIMUM_OS_VALUES" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')" -eq "${#REQUIRED_ARCHITECTURES[@]}" ]] \
   || fail "Expected one minimum-OS record for each architecture."
 while IFS= read -r minimum_os; do
   [[ -z "$minimum_os" || "$minimum_os" == "15.0" ]] \
@@ -147,7 +172,14 @@ done <<< "$MINIMUM_OS_VALUES"
 
 require_file "$RESOURCES/AppIcon.icns"
 require_directory "$RESOURCES/MTPKit_MTPKit.bundle"
-require_file "$RESOURCES/MTPKit_MTPKit.bundle/Contents/Info.plist"
+if [[ -f "$RESOURCES/MTPKit_MTPKit.bundle/Contents/Info.plist" ]]; then
+  MTPKIT_INFO_PLIST="$RESOURCES/MTPKit_MTPKit.bundle/Contents/Info.plist"
+elif [[ -f "$RESOURCES/MTPKit_MTPKit.bundle/Info.plist" ]]; then
+  MTPKIT_INFO_PLIST="$RESOURCES/MTPKit_MTPKit.bundle/Info.plist"
+else
+  fail "MTPKit_MTPKit.bundle has no Info.plist."
+fi
+/usr/bin/plutil -lint "$MTPKIT_INFO_PLIST" >/dev/null
 require_file "$LICENSES/Android-File-Browser-GPL-3.0.txt"
 require_file "$LICENSES/THIRD_PARTY_NOTICES.md"
 require_file "$LICENSES/TOOLS.md"

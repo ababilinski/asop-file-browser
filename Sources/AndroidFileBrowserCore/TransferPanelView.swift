@@ -55,7 +55,7 @@ struct TransferPanelView: View {
                                 Divider()
                                     .padding(.leading, 46)
                                 if queue.isExpanded(job.id) {
-                                    ForEach(queue.children(of: job.id).sorted(by: sortChildren)) { child in
+                                    ForEach(queue.children(of: job.id)) { child in
                                         TransferJobRow(queue: queue, job: child, level: 1)
                                         Divider()
                                             .padding(.leading, 74)
@@ -76,7 +76,7 @@ struct TransferPanelView: View {
     private var expandedHeader: some View {
         VStack(spacing: 7) {
             HStack(spacing: 10) {
-                Label("Transfers", systemImage: "arrow.left.arrow.right")
+                Label("Progress", systemImage: "chart.bar.fill")
                     .font(.headline)
                 Text(summaryText)
                     .font(.caption)
@@ -106,9 +106,24 @@ struct TransferPanelView: View {
                     Image(systemName: "chevron.down")
                 }
                 .buttonStyle(.borderless)
-                .help("Hide transfer panel")
+                .help("Hide progress panel")
             }
             totalProgressRow
+            if let selectedFailure = selectedJob?.errorMessage, !selectedFailure.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(selectedFailure)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(9)
+                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityLabel("Install error: \(selectedFailure)")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -124,7 +139,7 @@ struct TransferPanelView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "chevron.up")
                         .font(.caption.weight(.semibold))
-                    Label("Transfers", systemImage: "arrow.left.arrow.right")
+                    Label("Progress", systemImage: "chart.bar.fill")
                         .font(.headline)
                     Text(summaryText)
                         .font(.caption)
@@ -147,7 +162,7 @@ struct TransferPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show transfer panel")
+        .help("Show progress, install queues, and errors")
     }
 
     private var totalProgressRow: some View {
@@ -181,9 +196,6 @@ struct TransferPanelView: View {
         return lhs.createdAt > rhs.createdAt
     }
 
-    private func sortChildren(_ lhs: TransferJob, _ rhs: TransferJob) -> Bool {
-        lhs.createdAt < rhs.createdAt
-    }
 }
 
 private struct TransferJobRow: View {
@@ -278,6 +290,7 @@ private struct TransferJobRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(width: 180, alignment: .trailing)
+                        .help(statusText)
                 }
 
                 HStack(spacing: 6) {
@@ -292,7 +305,33 @@ private struct TransferJobRow: View {
                 .truncationMode(.middle)
             }
 
-            if job.canCancel {
+            if job.kind == .appInstall, job.state == .queued, !job.isAggregate {
+                Button {
+                    queue.moveQueuedJob(job.id, earlier: true)
+                } label: {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!queue.canMoveQueuedJob(job.id, earlier: true))
+                .help("Install earlier")
+
+                Button {
+                    queue.moveQueuedJob(job.id, earlier: false)
+                } label: {
+                    Image(systemName: "arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!queue.canMoveQueuedJob(job.id, earlier: false))
+                .help("Install later")
+
+                Button {
+                    queue.removeQueuedJob(job.id)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove from install queue")
+            } else if job.canCancel {
                 Button {
                     queue.cancel(jobID: job.id)
                 } label: {
@@ -333,6 +372,7 @@ private struct TransferJobRow: View {
         .onTapGesture {
             queue.select(jobID: job.id)
         }
+        .help(job.errorMessage ?? "\(job.title): \(statusText)")
     }
 
     @ViewBuilder
@@ -356,11 +396,14 @@ private struct TransferJobRow: View {
     }
 
     private var itemSymbol: String {
+        if job.kind == .appInstall {
+            return job.state == .completed ? "app.fill" : "app"
+        }
         switch job.itemKind {
         case .folder:
-            job.state == .completed ? "folder.fill" : "folder"
+            return job.state == .completed ? "folder.fill" : "folder"
         case .file:
-            job.state == .completed ? "doc.fill" : "doc"
+            return job.state == .completed ? "doc.fill" : "doc"
         }
     }
 

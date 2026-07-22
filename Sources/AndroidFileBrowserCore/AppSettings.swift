@@ -60,6 +60,7 @@ public final class AppSettings: ObservableObject {
         static let showScreenshotSetup = "settings.showScreenshotSetup"
         static let showRecordingSetup = "settings.showRecordingSetup"
         static let showPhoneControlSetup = "settings.showPhoneControlSetup"
+        static let phoneControlDeviceOptions = "settings.phoneControlDeviceOptions"
     }
 
     private let defaults: UserDefaults
@@ -203,6 +204,14 @@ public final class AppSettings: ObservableObject {
         didSet { defaults.set(showPhoneControlSetup, forKey: Key.showPhoneControlSetup) }
     }
 
+    @Published public var phoneControlDeviceOptions: [String: PhoneControlDeviceOptions] {
+        didSet {
+            if let data = try? JSONEncoder().encode(phoneControlDeviceOptions) {
+                defaults.set(data, forKey: Key.phoneControlDeviceOptions)
+            }
+        }
+    }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.appearanceMode = AppAppearanceMode(rawValue: defaults.string(forKey: Key.appearanceMode) ?? "") ?? .system
@@ -255,6 +264,12 @@ public final class AppSettings: ObservableObject {
         self.showScreenshotSetup = defaults.object(forKey: Key.showScreenshotSetup) as? Bool ?? true
         self.showRecordingSetup = defaults.object(forKey: Key.showRecordingSetup) as? Bool ?? true
         self.showPhoneControlSetup = defaults.object(forKey: Key.showPhoneControlSetup) as? Bool ?? true
+        if let data = defaults.data(forKey: Key.phoneControlDeviceOptions),
+           let storedOptions = try? JSONDecoder().decode([String: PhoneControlDeviceOptions].self, from: data) {
+            self.phoneControlDeviceOptions = storedOptions
+        } else {
+            self.phoneControlDeviceOptions = [:]
+        }
         if let data = defaults.data(forKey: Key.customQuickLocations),
            let locations = try? JSONDecoder().decode([QuickLocation].self, from: data) {
             self.customQuickLocations = locations
@@ -296,6 +311,21 @@ public final class AppSettings: ObservableObject {
         showScreenshotSetup = true
         showRecordingSetup = true
         showPhoneControlSetup = true
+        phoneControlDeviceOptions = [:]
+    }
+
+    public func phoneControlOptions(for deviceSerial: String) -> PhoneControlDeviceOptions {
+        phoneControlDeviceOptions[deviceSerial] ?? PhoneControlDeviceOptions()
+    }
+
+    public func setPhoneControlOption<Value>(
+        _ value: Value,
+        for deviceSerial: String,
+        keyPath: WritableKeyPath<PhoneControlDeviceOptions, Value>
+    ) {
+        var options = phoneControlOptions(for: deviceSerial)
+        options[keyPath: keyPath] = value
+        phoneControlDeviceOptions[deviceSerial] = options
     }
 
     public func setDefaultQuickLocation(id: String, visible: Bool) {
@@ -733,8 +763,8 @@ public struct SettingsView: View {
                 .padding(.leading, 48)
 
             SettingsToggleRow(
-                title: "Screenshot setup",
-                detail: "Show appearance and demo mode before taking a screenshot.",
+                title: "Screenshot options",
+                detail: "Show appearance and demo options below the display selector.",
                 symbol: "camera",
                 isOn: $settings.showScreenshotSetup
             )
@@ -743,8 +773,8 @@ public struct SettingsView: View {
                 .padding(.leading, 48)
 
             SettingsToggleRow(
-                title: "Recording setup",
-                detail: "Show recording, video, appearance, touch, and demo settings before recording.",
+                title: "Recording options",
+                detail: "Show recording, video, appearance, touch, and demo options below the display selector.",
                 symbol: "record.circle",
                 isOn: $settings.showRecordingSetup
             )

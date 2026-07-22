@@ -31,7 +31,7 @@ jobs:
   candidate:
     name: Prepare release candidate
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -148,29 +148,49 @@ jobs:
           swift test -c release
           --filter 'ToolchainManagerTests/testLiveOfficialArchiveInstallsBothToolsWhenEnabled'
 
-      - name: Build and verify the unsigned candidate
+      - name: Build and verify the unsigned candidates
         run: |
-          APP_VERSION="$APP_VERSION" \
-          APP_BUILD="$APP_BUILD" \
-          CODE_SIGN_IDENTITY="-" \
-          ./scripts/package-app.sh
-          ./scripts/create-release-archive.sh \
-            ".build/release/ASOP File Browser.app" \
-            "dist" \
-            "$APP_VERSION" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --require-no-bundled-tools
-          ./scripts/create-release-disk-image.sh \
-            ".build/release/ASOP File Browser.app" \
-            "dist" \
-            "$APP_VERSION" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --require-no-bundled-tools
+          while IFS='|' read -r architecture directory; do
+            APP_VERSION="$APP_VERSION" \
+            APP_BUILD="$APP_BUILD" \
+            APP_ARCHITECTURE="$architecture" \
+            APP_BUNDLE_OUTPUT_PATH=".build/$directory/ASOP File Browser.app" \
+            CODE_SIGN_IDENTITY="-" \
+            ./scripts/package-app.sh
+          done <<'VARIANTS'
+          universal|release-universal
+          arm64|release-arm64
+          x86_64|release-x86_64
+          VARIANTS
+
+          while IFS='|' read -r architecture directory suffix; do
+            app_path=".build/$directory/ASOP File Browser.app"
+            RELEASE_ARTIFACT_SUFFIX="$suffix" \
+            ./scripts/create-release-archive.sh \
+              "$app_path" \
+              "dist" \
+              "$APP_VERSION" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --require-no-bundled-tools
+            RELEASE_ARTIFACT_SUFFIX="$suffix" \
+            ./scripts/create-release-disk-image.sh \
+              "$app_path" \
+              "dist" \
+              "$APP_VERSION" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --require-no-bundled-tools
+          done <<'VARIANTS'
+          universal|release-universal|
+          arm64|release-arm64|Apple-Silicon
+          x86_64|release-x86_64|Intel
+          VARIANTS
 
       - name: Open the tested candidate
-        run: ./scripts/verify-app-launch.sh ".build/release/ASOP File Browser.app"
+        run: ./scripts/verify-app-launch.sh ".build/release-universal/ASOP File Browser.app"
 
       - name: Upload candidate for signing
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -179,6 +199,10 @@ jobs:
           path: |
             dist/ASOP-File-Browser-${{ inputs.version }}-macOS.zip
             dist/ASOP-File-Browser-${{ inputs.version }}-macOS.zip.sha256
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Apple-Silicon.zip
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Apple-Silicon.zip.sha256
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Intel.zip
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Intel.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -188,12 +212,14 @@ jobs:
     needs:
       - candidate
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: release
     permissions:
       contents: read
     outputs:
-      dmg_sha256: ${{ steps.release_digest.outputs.sha256 }}
+      universal_dmg_sha256: ${{ steps.release_digest.outputs.universal_sha256 }}
+      arm64_dmg_sha256: ${{ steps.release_digest.outputs.arm64_sha256 }}
+      x86_64_dmg_sha256: ${{ steps.release_digest.outputs.x86_64_sha256 }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       APP_VERSION: ${{ inputs.version }}
@@ -210,13 +236,11 @@ jobs:
       - name: Configure temporary release paths
         run: |
           {
-            echo "APP_PATH=$RUNNER_TEMP/release-staging/ASOP File Browser.app"
+            echo "RELEASE_STAGING_ROOT=$RUNNER_TEMP/release-staging"
             echo "CERTIFICATE_PATH=$RUNNER_TEMP/developer-id-application.p12"
             echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary-api-key.p8"
             echo "KEYCHAIN_PATH=$RUNNER_TEMP/release-signing.keychain-db"
-            echo "DISK_IMAGE_PATH=$GITHUB_WORKSPACE/dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg"
-            echo "NOTARY_RESULT=$RUNNER_TEMP/notary-result.json"
-            echo "NOTARY_LOG=$RUNNER_TEMP/notary-log.json"
+            echo "NOTARY_RECORDS=$RUNNER_TEMP/notary-records"
           } >> "$GITHUB_ENV"
 
       - name: Download tested candidate
@@ -225,21 +249,30 @@ jobs:
           name: release-candidate-${{ inputs.commit }}-${{ inputs.version }}-${{ inputs.build }}
           path: candidate
 
-      - name: Verify and extract tested candidate
+      - name: Verify and extract tested candidates
         run: |
-          (
-            cd candidate
-            shasum -a 256 -c "ASOP-File-Browser-$APP_VERSION-macOS.zip.sha256"
-          )
-          mkdir -p "$RUNNER_TEMP/release-staging"
-          ditto -x -k \
-            "candidate/ASOP-File-Browser-$APP_VERSION-macOS.zip" \
-            "$RUNNER_TEMP/release-staging"
-          ./scripts/validate-app-bundle.sh \
-            "$APP_PATH" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --require-no-bundled-tools
+          mkdir -p "$RELEASE_STAGING_ROOT"
+          while IFS='|' read -r architecture suffix; do
+            file_suffix="${suffix:+-$suffix}"
+            archive="ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.zip"
+            (
+              cd candidate
+              shasum -a 256 -c "$archive.sha256"
+            )
+            destination="$RELEASE_STAGING_ROOT/$architecture"
+            mkdir -p "$destination"
+            ditto -x -k "candidate/$archive" "$destination"
+            ./scripts/validate-app-bundle.sh \
+              "$destination/ASOP File Browser.app" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --require-no-bundled-tools
+          done <<'VARIANTS'
+          universal|
+          arm64|Apple-Silicon
+          x86_64|Intel
+          VARIANTS
 
       - name: Import release credentials
         env:
@@ -300,90 +333,112 @@ jobs:
             echo "CODE_SIGN_IDENTITY=$CODE_SIGN_IDENTITY"
           } >> "$GITHUB_ENV"
 
-      - name: Apply and verify Developer ID signature
+      - name: Apply and verify Developer ID signatures
         run: |
-          codesign \
-            --force \
-            --options runtime \
-            --timestamp \
-            --sign "$CODE_SIGN_IDENTITY" \
-            --entitlements Resources/AndroidFileBrowser.entitlements \
-            "$APP_PATH"
-          ./scripts/validate-app-bundle.sh \
-            "$APP_PATH" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --distribution \
-            --require-no-bundled-tools
-          ./scripts/check-notary-submission-readiness.sh "$APP_PATH"
+          for architecture in universal arm64 x86_64; do
+            app_path="$RELEASE_STAGING_ROOT/$architecture/ASOP File Browser.app"
+            codesign \
+              --force \
+              --options runtime \
+              --timestamp \
+              --sign "$CODE_SIGN_IDENTITY" \
+              --entitlements Resources/AndroidFileBrowser.entitlements \
+              "$app_path"
+            ./scripts/validate-app-bundle.sh \
+              "$app_path" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --team-id "$APPLE_TEAM_ID" \
+              --distribution \
+              --require-no-bundled-tools
+            ./scripts/check-notary-submission-readiness.sh "$app_path"
+          done
 
-      - name: Create and sign the release disk image
+      - name: Create and sign the release disk images
         run: |
-          ./scripts/create-release-disk-image.sh \
-            "$APP_PATH" \
-            "dist" \
-            "$APP_VERSION" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --distribution \
-            --require-no-bundled-tools
-          codesign \
-            --force \
-            --timestamp \
-            --sign "$CODE_SIGN_IDENTITY" \
-            "$DISK_IMAGE_PATH"
-          rm -f "$DISK_IMAGE_PATH.sha256"
-          ./scripts/validate-release-disk-image.sh \
-            "$DISK_IMAGE_PATH" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --distribution \
-            --require-no-bundled-tools \
-            --dmg-signed
+          while IFS='|' read -r architecture suffix; do
+            file_suffix="${suffix:+-$suffix}"
+            app_path="$RELEASE_STAGING_ROOT/$architecture/ASOP File Browser.app"
+            disk_image="dist/ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.dmg"
+            RELEASE_ARTIFACT_SUFFIX="$suffix" \
+            ./scripts/create-release-disk-image.sh \
+              "$app_path" \
+              "dist" \
+              "$APP_VERSION" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --team-id "$APPLE_TEAM_ID" \
+              --distribution \
+              --require-no-bundled-tools
+            codesign \
+              --force \
+              --timestamp \
+              --sign "$CODE_SIGN_IDENTITY" \
+              "$disk_image"
+            rm -f "$disk_image.sha256"
+            ./scripts/validate-release-disk-image.sh \
+              "$disk_image" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --team-id "$APPLE_TEAM_ID" \
+              --distribution \
+              --require-no-bundled-tools \
+              --dmg-signed
+          done <<'VARIANTS'
+          universal|
+          arm64|Apple-Silicon
+          x86_64|Intel
+          VARIANTS
 
-      - name: Submit the disk image to Apple notarization
+      - name: Submit the disk images to Apple notarization
         run: |
-          rm -f "$NOTARY_RESULT" "$NOTARY_LOG"
+          mkdir -p "$NOTARY_RECORDS"
+          while IFS='|' read -r architecture suffix; do
+            file_suffix="${suffix:+-$suffix}"
+            disk_image="dist/ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.dmg"
+            notary_result="$NOTARY_RECORDS/$architecture-result.json"
+            notary_log="$NOTARY_RECORDS/$architecture-log.json"
+            rm -f "$notary_result" "$notary_log"
 
-          set +e
-          xcrun notarytool submit "$DISK_IMAGE_PATH" \
-            --key "$NOTARY_KEY_PATH" \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER_ID" \
-            --wait \
-            --output-format json >"$NOTARY_RESULT"
-          NOTARY_EXIT_CODE=$?
-          set -e
-
-          SUBMISSION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$NOTARY_RESULT" 2>/dev/null || true)"
-          NOTARY_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$NOTARY_RESULT" 2>/dev/null || true)"
-
-          NOTARY_LOG_EXIT_CODE=1
-          if [[ -n "$SUBMISSION_ID" ]]; then
             set +e
-            xcrun notarytool log "$SUBMISSION_ID" "$NOTARY_LOG" \
+            xcrun notarytool submit "$disk_image" \
               --key "$NOTARY_KEY_PATH" \
               --key-id "$NOTARY_KEY_ID" \
-              --issuer "$NOTARY_ISSUER_ID"
-            NOTARY_LOG_EXIT_CODE=$?
+              --issuer "$NOTARY_ISSUER_ID" \
+              --wait \
+              --output-format json >"$notary_result"
+            NOTARY_EXIT_CODE=$?
             set -e
-          fi
 
-          if [[ "$NOTARY_EXIT_CODE" -ne 0 || "$NOTARY_STATUS" != "Accepted" || -z "$SUBMISSION_ID" ]]; then
-            cat "$NOTARY_RESULT" >&2
-            [[ ! -s "$NOTARY_LOG" ]] || cat "$NOTARY_LOG" >&2
-            exit 1
-          fi
+            SUBMISSION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$notary_result" 2>/dev/null || true)"
+            NOTARY_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$notary_result" 2>/dev/null || true)"
 
-          if [[ "$NOTARY_LOG_EXIT_CODE" -ne 0 || ! -s "$NOTARY_LOG" ]]; then
-            echo "Apple accepted the submission, but its notarization log could not be retrieved." >&2
-            exit 1
-          fi
+            NOTARY_LOG_EXIT_CODE=1
+            if [[ -n "$SUBMISSION_ID" ]]; then
+              set +e
+              xcrun notarytool log "$SUBMISSION_ID" "$notary_log" \
+                --key "$NOTARY_KEY_PATH" \
+                --key-id "$NOTARY_KEY_ID" \
+                --issuer "$NOTARY_ISSUER_ID"
+              NOTARY_LOG_EXIT_CODE=$?
+              set -e
+            fi
 
-          python3 - "$NOTARY_LOG" <<'PY'
+            if [[ "$NOTARY_EXIT_CODE" -ne 0 || "$NOTARY_STATUS" != "Accepted" || -z "$SUBMISSION_ID" ]]; then
+              cat "$notary_result" >&2
+              [[ ! -s "$notary_log" ]] || cat "$notary_log" >&2
+              exit 1
+            fi
+
+            if [[ "$NOTARY_LOG_EXIT_CODE" -ne 0 || ! -s "$notary_log" ]]; then
+              echo "Apple accepted $architecture, but its notarization log could not be retrieved." >&2
+              exit 1
+            fi
+
+            python3 - "$notary_log" <<'PY'
           import json
           import sys
 
@@ -398,31 +453,45 @@ jobs:
               print(json.dumps(issues, indent=2), file=sys.stderr)
               raise SystemExit("Apple's notarization log contains issues.")
           PY
+          done <<'VARIANTS'
+          universal|
+          arm64|Apple-Silicon
+          x86_64|Intel
+          VARIANTS
 
-      - name: Staple and validate the release disk image
+      - name: Staple and validate the release disk images
         run: |
-          xcrun stapler staple "$DISK_IMAGE_PATH"
-          ./scripts/validate-release-disk-image.sh \
-            "$DISK_IMAGE_PATH" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --distribution \
-            --require-no-bundled-tools \
-            --dmg-notarized
-          (
-            cd dist
-            shasum -a 256 \
-              "ASOP-File-Browser-$APP_VERSION-macOS.dmg" \
-              >"ASOP-File-Browser-$APP_VERSION-macOS.dmg.sha256"
-            shasum -a 256 -c \
-              "ASOP-File-Browser-$APP_VERSION-macOS.dmg.sha256"
-          )
+          while IFS='|' read -r architecture suffix; do
+            file_suffix="${suffix:+-$suffix}"
+            disk_image="dist/ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.dmg"
+            xcrun stapler staple "$disk_image"
+            ./scripts/validate-release-disk-image.sh \
+              "$disk_image" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --team-id "$APPLE_TEAM_ID" \
+              --distribution \
+              --require-no-bundled-tools \
+              --dmg-notarized
+            (
+              cd dist
+              disk_image_name="$(basename "$disk_image")"
+              shasum -a 256 "$disk_image_name" >"$disk_image_name.sha256"
+              shasum -a 256 -c "$disk_image_name.sha256"
+            )
+          done <<'VARIANTS'
+          universal|
+          arm64|Apple-Silicon
+          x86_64|Intel
+          VARIANTS
 
       - name: Record final disk image digest
         id: release_digest
         run: |
-          echo "sha256=$(shasum -a 256 "$DISK_IMAGE_PATH" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "universal_sha256=$(shasum -a 256 "dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "arm64_sha256=$(shasum -a 256 "dist/ASOP-File-Browser-$APP_VERSION-macOS-Apple-Silicon.dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "x86_64_sha256=$(shasum -a 256 "dist/ASOP-File-Browser-$APP_VERSION-macOS-Intel.dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Remove temporary release credentials
         if: ${{ always() }}
@@ -442,6 +511,10 @@ jobs:
           path: |
             dist/ASOP-File-Browser-${{ inputs.version }}-macOS.dmg
             dist/ASOP-File-Browser-${{ inputs.version }}-macOS.dmg.sha256
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Apple-Silicon.dmg
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Apple-Silicon.dmg.sha256
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Intel.dmg
+            dist/ASOP-File-Browser-${{ inputs.version }}-macOS-Intel.dmg.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -452,8 +525,7 @@ jobs:
         with:
           name: notarization-records-${{ inputs.version }}-${{ inputs.build }}
           path: |
-            ${{ runner.temp }}/notary-result.json
-            ${{ runner.temp }}/notary-log.json
+            ${{ runner.temp }}/notary-records/*.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -467,8 +539,12 @@ jobs:
         include:
           - name: Apple silicon
             runner: macos-15
+            architecture: arm64
+            suffix: Apple-Silicon
           - name: Intel
             runner: macos-15-intel
+            architecture: x86_64
+            suffix: Intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     permissions:
@@ -491,33 +567,49 @@ jobs:
           name: notarized-release-${{ inputs.version }}-${{ inputs.build }}
           path: dist
 
-      - name: Verify checksum, signature, notarization, and contents
+      - name: Verify and open the universal and native downloads
         env:
-          EXPECTED_DMG_SHA256: ${{ needs.sign-and-notarize.outputs.dmg_sha256 }}
+          EXPECTED_UNIVERSAL_SHA256: ${{ needs.sign-and-notarize.outputs.universal_dmg_sha256 }}
+          EXPECTED_ARM64_SHA256: ${{ needs.sign-and-notarize.outputs.arm64_dmg_sha256 }}
+          EXPECTED_X86_64_SHA256: ${{ needs.sign-and-notarize.outputs.x86_64_dmg_sha256 }}
+          NATIVE_ARCHITECTURE: ${{ matrix.architecture }}
+          NATIVE_SUFFIX: ${{ matrix.suffix }}
         run: |
-          (
-            cd dist
-            shasum -a 256 -c \
-              "ASOP-File-Browser-$APP_VERSION-macOS.dmg.sha256"
-          )
-          ACTUAL_DMG_SHA256="$(
-            shasum -a 256 \
-              "dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg" |
-              awk '{print $1}'
-          )"
-          if [[ "$ACTUAL_DMG_SHA256" != "$EXPECTED_DMG_SHA256" ]]; then
-            echo "The release disk image changed after signing." >&2
-            exit 1
-          fi
-          ./scripts/validate-release-disk-image.sh \
-            "dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg" \
-            --version "$APP_VERSION" \
-            --build "$APP_BUILD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --distribution \
-            --require-no-bundled-tools \
-            --dmg-notarized \
-            --launch-app
+          case "$NATIVE_ARCHITECTURE" in
+            arm64) EXPECTED_NATIVE_SHA256="$EXPECTED_ARM64_SHA256" ;;
+            x86_64) EXPECTED_NATIVE_SHA256="$EXPECTED_X86_64_SHA256" ;;
+            *) echo "Unexpected native architecture: $NATIVE_ARCHITECTURE" >&2; exit 1 ;;
+          esac
+
+          verify_download() {
+            architecture="$1"
+            suffix="$2"
+            expected_sha256="$3"
+            file_suffix="${suffix:+-$suffix}"
+            disk_image="dist/ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.dmg"
+            (
+              cd dist
+              shasum -a 256 -c "$(basename "$disk_image").sha256"
+            )
+            actual_sha256="$(shasum -a 256 "$disk_image" | awk '{print $1}')"
+            if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+              echo "$architecture disk image changed after signing." >&2
+              exit 1
+            fi
+            ./scripts/validate-release-disk-image.sh \
+              "$disk_image" \
+              --version "$APP_VERSION" \
+              --build "$APP_BUILD" \
+              --architecture "$architecture" \
+              --team-id "$APPLE_TEAM_ID" \
+              --distribution \
+              --require-no-bundled-tools \
+              --dmg-notarized \
+              --launch-app
+          }
+
+          verify_download universal "" "$EXPECTED_UNIVERSAL_SHA256"
+          verify_download "$NATIVE_ARCHITECTURE" "$NATIVE_SUFFIX" "$EXPECTED_NATIVE_SHA256"
 
   publish:
     name: Attest and publish
@@ -542,20 +634,30 @@ jobs:
 
       - name: Verify notarized release digest
         env:
-          EXPECTED_DMG_SHA256: ${{ needs.sign-and-notarize.outputs.dmg_sha256 }}
+          EXPECTED_UNIVERSAL_SHA256: ${{ needs.sign-and-notarize.outputs.universal_dmg_sha256 }}
+          EXPECTED_ARM64_SHA256: ${{ needs.sign-and-notarize.outputs.arm64_dmg_sha256 }}
+          EXPECTED_X86_64_SHA256: ${{ needs.sign-and-notarize.outputs.x86_64_dmg_sha256 }}
         run: |
           cd dist
-          sha256sum -c "ASOP-File-Browser-$APP_VERSION-macOS.dmg.sha256"
-          ACTUAL_DMG_SHA256="$(sha256sum "ASOP-File-Browser-$APP_VERSION-macOS.dmg" | awk '{print $1}')"
-          if [[ "$ACTUAL_DMG_SHA256" != "$EXPECTED_DMG_SHA256" ]]; then
-            echo "The notarized disk image changed between the signing and publishing jobs." >&2
-            exit 1
-          fi
+          while IFS='|' read -r suffix expected_sha256; do
+            file_suffix="${suffix:+-$suffix}"
+            disk_image="ASOP-File-Browser-$APP_VERSION-macOS$file_suffix.dmg"
+            sha256sum -c "$disk_image.sha256"
+            actual_sha256="$(sha256sum "$disk_image" | awk '{print $1}')"
+            if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+              echo "$disk_image changed between the signing and publishing jobs." >&2
+              exit 1
+            fi
+          done <<VARIANTS
+          |$EXPECTED_UNIVERSAL_SHA256
+          Apple-Silicon|$EXPECTED_ARM64_SHA256
+          Intel|$EXPECTED_X86_64_SHA256
+          VARIANTS
 
       - name: Attest release provenance
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
-          subject-path: dist/ASOP-File-Browser-${{ inputs.version }}-macOS.dmg
+          subject-path: dist/ASOP-File-Browser-${{ inputs.version }}-macOS*.dmg
 
       - name: Publish GitHub release
         env:
@@ -564,10 +666,6 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           TAG="$APP_VERSION"
-          DISK_IMAGE="dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg"
-          CHECKSUM="$DISK_IMAGE.sha256"
-          DISK_IMAGE_NAME="$(basename "$DISK_IMAGE")"
-          CHECKSUM_NAME="$(basename "$CHECKSUM")"
           CREATED_RELEASE_ID=""
 
           cleanup_failed_draft() {
@@ -607,23 +705,37 @@ jobs:
             echo "GitHub did not return the ID of the draft release." >&2
             exit 1
           fi
+          UNIVERSAL_DMG="dist/ASOP-File-Browser-$APP_VERSION-macOS.dmg"
+          ARM64_DMG="dist/ASOP-File-Browser-$APP_VERSION-macOS-Apple-Silicon.dmg"
+          X86_64_DMG="dist/ASOP-File-Browser-$APP_VERSION-macOS-Intel.dmg"
+          ASSETS=(
+            "$UNIVERSAL_DMG"
+            "$UNIVERSAL_DMG.sha256"
+            "$ARM64_DMG"
+            "$ARM64_DMG.sha256"
+            "$X86_64_DMG"
+            "$X86_64_DMG.sha256"
+          )
           gh release upload "$TAG" \
-            "$DISK_IMAGE#ASOP File Browser $APP_VERSION for macOS" \
-            "$CHECKSUM#SHA-256 checksum"
+            "$UNIVERSAL_DMG#ASOP File Browser $APP_VERSION for macOS (Universal, recommended)" \
+            "$UNIVERSAL_DMG.sha256#Universal SHA-256 checksum" \
+            "$ARM64_DMG#ASOP File Browser $APP_VERSION for Apple silicon" \
+            "$ARM64_DMG.sha256#Apple silicon SHA-256 checksum" \
+            "$X86_64_DMG#ASOP File Browser $APP_VERSION for Intel" \
+            "$X86_64_DMG.sha256#Intel SHA-256 checksum"
 
-          LOCAL_DMG_DIGEST="sha256:$(sha256sum "$DISK_IMAGE" | awk '{print $1}')"
-          LOCAL_CHECKSUM_DIGEST="sha256:$(sha256sum "$CHECKSUM" | awk '{print $1}')"
-          REMOTE_DMG_DIGEST="$(
-            gh release view "$TAG" --json assets \
-              --jq ".assets[] | select(.name == \"$DISK_IMAGE_NAME\") | .digest"
-          )"
-          REMOTE_CHECKSUM_DIGEST="$(
-            gh release view "$TAG" --json assets \
-              --jq ".assets[] | select(.name == \"$CHECKSUM_NAME\") | .digest"
-          )"
-
-          [[ "$REMOTE_DMG_DIGEST" == "$LOCAL_DMG_DIGEST" ]]
-          [[ "$REMOTE_CHECKSUM_DIGEST" == "$LOCAL_CHECKSUM_DIGEST" ]]
+          for asset in "${ASSETS[@]}"; do
+            asset_name="$(basename "$asset")"
+            local_digest="sha256:$(sha256sum "$asset" | awk '{print $1}')"
+            remote_digest="$(
+              gh release view "$TAG" --json assets \
+                --jq ".assets[] | select(.name == \"$asset_name\") | .digest"
+            )"
+            if [[ "$remote_digest" != "$local_digest" ]]; then
+              echo "$asset_name changed while uploading to GitHub." >&2
+              exit 1
+            fi
+          done
 
           gh release edit "$TAG" --draft=false
           CREATED_RELEASE_ID=""

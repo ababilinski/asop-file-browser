@@ -59,6 +59,29 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings(defaults: defaults).phoneCapturePresentation, .attachedPopover)
     }
 
+    func testPhoneControlDeviceOptionsDefaultSafePersistAndReset() {
+        let defaults = makeDefaults()
+        let settings = AppSettings(defaults: defaults)
+        let serial = "device-serial"
+
+        XCTAssertFalse(settings.phoneControlOptions(for: serial).wakesDeviceOnOpen)
+        XCTAssertTrue(settings.phoneControlOptions(for: serial).capturesAudio)
+
+        settings.setPhoneControlOption(true, for: serial, keyPath: \.wakesDeviceOnOpen)
+        settings.setPhoneControlOption(false, for: serial, keyPath: \.capturesAudio)
+        settings.setPhoneControlOption(.fps30, for: serial, keyPath: \.frameRateLimit)
+
+        let reloaded = AppSettings(defaults: defaults)
+        XCTAssertTrue(reloaded.phoneControlOptions(for: serial).wakesDeviceOnOpen)
+        XCTAssertFalse(reloaded.phoneControlOptions(for: serial).capturesAudio)
+        XCTAssertEqual(reloaded.phoneControlOptions(for: serial).frameRateLimit, .fps30)
+
+        settings.reset()
+        XCTAssertFalse(settings.phoneControlOptions(for: serial).wakesDeviceOnOpen)
+        XCTAssertTrue(settings.phoneControlOptions(for: serial).capturesAudio)
+        XCTAssertEqual(settings.phoneControlOptions(for: serial).frameRateLimit, .automatic)
+    }
+
     func testContentBackgroundDefaultsToGlassPersistsAndResets() {
         let defaults = makeDefaults()
         let settings = AppSettings(defaults: defaults)
