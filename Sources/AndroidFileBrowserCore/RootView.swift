@@ -420,6 +420,9 @@ private struct SidebarView: View {
                             get: { model.selectedDeviceID },
                             set: { model.selectADBDevice(id: $0) }
                         )) {
+                            if model.selectedDeviceID == nil {
+                                Text("No connected device").tag(Optional<String>.none)
+                            }
                             ForEach(model.devices) { device in
                                 Text(device.title).tag(Optional(device.id))
                             }

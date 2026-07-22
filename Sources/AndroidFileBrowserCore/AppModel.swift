@@ -143,7 +143,7 @@ public final class AppModel: ObservableObject {
     @Published public var selectedDeviceID: AndroidDevice.ID? {
         didSet {
             guard oldValue != selectedDeviceID else { return }
-            resetADBSessionStateForDeviceChange()
+            invalidateADBDeviceSession()
         }
     }
     @Published public var sidebarSelection: SidebarDestination? {
@@ -287,6 +287,7 @@ public final class AppModel: ObservableObject {
     private var lastSelectedFileID: AndroidFile.ID?
     private var keyboardSelectionAnchorFileID: AndroidFile.ID?
     private var lastSelectedPackageID: AndroidPackage.ID?
+    private var packageLoadRevision = 0
     private var searchTask: Task<Void, Never>?
     private var pendingInlineRenameWorkItem: DispatchWorkItem?
     private var inlineRenameBlockedBySelectionFileID: AndroidFile.ID?
@@ -310,6 +311,9 @@ public final class AppModel: ObservableObject {
     private var fileRedoStack: [FileHistoryOperation] = []
     private var operationActivity = OperationActivityTracker()
     private var cancellableReadTasks: [UUID: Task<Void, Never>] = [:]
+    private var deviceScopedReadTaskIDs = Set<UUID>()
+    private var adbDeviceSessionRevision = 0
+    private var isPollingDeviceConnections = false
     private var adbNavigationTask: Task<Void, Never>?
     private var browserReconciliationTask: Task<Void, Never>?
     private var browserReconciliationRequestID: UUID?
@@ -421,7 +425,8 @@ public final class AppModel: ObservableObject {
     }
 
     public var selectedDevice: AndroidDevice? {
-        devices.first { $0.id == selectedDeviceID } ?? devices.first
+        guard let selectedDeviceID else { return nil }
+        return devices.first { $0.id == selectedDeviceID }
     }
 
     public var phoneControlSession: PhoneControlSession? {
@@ -1364,7 +1369,9 @@ public final class AppModel: ObservableObject {
     }
 
     public var canSwitchADBDevice: Bool {
-        !isBusy && !isSwitchingADBDevice && !isRunningFileHistoryOperation
+        !isSwitchingADBDevice
+            && !operationActivity.hasTerminationBlockingActivity
+            && !isRunningFileHistoryOperation
     }
 
     public func refreshLaunchConnections() async {
@@ -1383,28 +1390,37 @@ public final class AppModel: ObservableObject {
         }
         isSwitchingADBDevice = true
         selectedDeviceID = id
+        isSwitchingADBDevice = false
         guard selectedDevice?.state == .device else {
-            isSwitchingADBDevice = false
-            statusMessage = "Select a connected phone."
+            statusMessage = "Select a connected device."
             return
         }
+        loadSelectedADBDeviceInBackground()
+    }
+
+    private func loadSelectedADBDeviceInBackground() {
+        guard let deviceID = selectedDeviceID,
+              selectedDevice?.state == .device else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isSwitchingADBDevice = false }
-            await self.performCancellableRead("Loading phone...") {
+            await self.performCancellableRead("Loading device...") {
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 try await self.refreshStorage()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 await self.refreshBatteryStatus()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 if self.connectionMode == .adb {
                     try await self.refreshCurrentSurface()
                 }
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 self.statusMessage = "Ready."
             }
         }
     }
 
     public func refreshDevices(requestUSBTransferIfADBUnavailable: Bool = false) async {
-        await performCancellableRead("Refreshing devices...") { [self] in
+        await performCancellableRead("Refreshing devices...", deviceScoped: false) { [self] in
             let found: [AndroidDevice]
             do {
                 found = try await deviceManager.devices()
@@ -1458,30 +1474,45 @@ public final class AppModel: ObservableObject {
     }
 
     public func pollDeviceConnections() async {
-        guard !isPreparingForTermination, !isBusy else { return }
+        guard !isPreparingForTermination,
+              !isPollingDeviceConnections,
+              !operationActivity.hasTerminationBlockingActivity,
+              !isRunningFileHistoryOperation else { return }
         if isUSBTransferSelected, usbTransferManager.isADBReleasedForMTPSession {
             statusMessage = usbTransferManager.statusMessage
             return
         }
 
+        isPollingDeviceConnections = true
+        defer { isPollingDeviceConnections = false }
+        let wasBusy = isBusy
+
         do {
             let found = try await deviceManager.devices()
             adbRuntimeIssue = nil
             suppressedToolSetup.remove(.adb)
+            let previousSelectedDeviceID = selectedDeviceID
             let adbBecameReady = applyADBDeviceSnapshot(found)
-            if adbBecameReady, connectionMode == .adb {
-                prepareADBReadySurfaceForTransition()
-                try await refreshStorage()
-                try await refreshCurrentSurface()
-            }
-            if selectedDevice?.state == .device {
+            let selectedDeviceChanged = previousSelectedDeviceID != selectedDeviceID
+            if (adbBecameReady || selectedDeviceChanged),
+               connectionMode == .adb,
+               selectedDevice?.state == .device {
+                if adbBecameReady {
+                    prepareADBReadySurfaceForTransition()
+                }
+                loadSelectedADBDeviceInBackground()
+            } else if !wasBusy, selectedDevice?.state == .device {
                 await refreshBatteryStatus()
             }
-            await refreshPhoneControlBatteryStatuses()
+            if !wasBusy {
+                await refreshPhoneControlBatteryStatuses()
+            }
 
-            statusMessage = adbBecameReady
-                ? "ADB connected. Full device browsing is available."
-                : connectionStatusMessage(adbDevices: found)
+            if !wasBusy || selectedDeviceChanged || found.isEmpty {
+                statusMessage = adbBecameReady
+                    ? "ADB connected. Full device browsing is available."
+                    : connectionStatusMessage(adbDevices: found)
+            }
         } catch FileOperationError.missingTool {
             clearADBOnlyState(clearDevices: true)
             adbRuntimeIssue = "Phone tools are not installed."
@@ -6720,22 +6751,68 @@ public final class AppModel: ObservableObject {
     }
 
     private func loadPackagesThrowing() async throws {
-        guard let device = selectedDevice else { throw FileOperationError.noDevice }
-        async let runningProcessNames = appManager.runningProcessNames(device: device)
+        guard let device = selectedDevice, device.state == .device else {
+            throw FileOperationError.noDevice
+        }
+        packageLoadRevision &+= 1
+        let loadRevision = packageLoadRevision
+        let requestedKind = appKind
         let basePackages = try await appManager.packages(device: device, kind: appKind)
-        var enriched: [AndroidPackage] = []
-        for package in basePackages {
-            enriched.append((try? await appManager.details(device: device, package: package)) ?? package)
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+
+        var visiblePackages = requestedKind == .all
+            ? basePackages
+            : basePackages.filter { $0.kind == requestedKind }
+        applyLoadedPackages(visiblePackages)
+        statusMessage = "Loaded \(visiblePackages.count) app\(visiblePackages.count == 1 ? "" : "s")."
+
+        let processNames: Set<String>
+        do {
+            processNames = try await appManager.runningProcessNames(device: device)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            processNames = []
         }
-        if appKind != .all {
-            enriched = enriched.filter { $0.kind == appKind }
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+        visiblePackages = markRunning(visiblePackages, processNames: processNames)
+        applyLoadedPackages(visiblePackages)
+
+        for package in visiblePackages {
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            let enrichedPackage: AndroidPackage
+            do {
+                enrichedPackage = try await appManager.details(device: device, package: package)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
+            }
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            guard let index = packages.firstIndex(where: { $0.id == enrichedPackage.id }) else { continue }
+            packages[index] = enrichedPackage
         }
-        let processNames = (try? await runningProcessNames) ?? []
-        enriched = markRunning(enriched, processNames: processNames)
+    }
+
+    private func validatePackageLoad(
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try Task.checkCancellation()
+        guard packageLoadRevision == revision,
+              appKind == kind,
+              selectedDeviceID == device.id,
+              devices.contains(where: { $0.id == device.id && $0.state == .device }) else {
+            throw CancellationError()
+        }
+    }
+
+    private func applyLoadedPackages(_ loadedPackages: [AndroidPackage]) {
         let selectedIDsAtApply = selectedPackageIDs
         let lastSelectedIDAtApply = lastSelectedPackageID
-        let availableIDs = Set(enriched.map(\.id))
-        packages = enriched
+        let availableIDs = Set(loadedPackages.map(\.id))
+        packages = loadedPackages
         selectedPackageIDs = selectedIDsAtApply.intersection(availableIDs)
         expandedStorageAppPackageIDs = expandedStorageAppPackageIDs.intersection(availableIDs)
         loadingStorageAppPackageIDs = loadingStorageAppPackageIDs.intersection(availableIDs)
@@ -7013,8 +7090,8 @@ public final class AppModel: ObservableObject {
         let selectedDeviceIsReady = found.first { $0.id == selectedDeviceID }?.state == .device
         if selectedDeviceID == nil
             || !found.contains(where: { $0.id == selectedDeviceID })
-            || (!selectedDeviceIsReady && found.contains(where: { $0.state == .device })) {
-            selectedDeviceID = found.first(where: { $0.state == .device })?.id ?? found.first?.id
+            || !selectedDeviceIsReady {
+            selectedDeviceID = found.first(where: { $0.state == .device })?.id
         }
 
         if previousSelectedDeviceID != selectedDeviceID {
@@ -7085,14 +7162,17 @@ public final class AppModel: ObservableObject {
 
     func performCancellableRead(
         _ message: String,
+        deviceScoped: Bool = true,
         operation: @escaping @MainActor () async throws -> Void
     ) async {
         guard !isPreparingForTermination else { return }
 
         let operationID = UUID()
+        let deviceSessionRevision = adbDeviceSessionRevision
         beginTrackedOperation(blocksTermination: false)
         defer {
             cancellableReadTasks[operationID] = nil
+            deviceScopedReadTaskIDs.remove(operationID)
             endTrackedOperation(blocksTermination: false)
         }
         statusMessage = message
@@ -7100,14 +7180,23 @@ public final class AppModel: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                try Task.checkCancellation()
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else {
+                    throw CancellationError()
+                }
                 try await operation()
+                try Task.checkCancellation()
             } catch is CancellationError {
                 return
             } catch {
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else { return }
                 handleOperationError(error)
             }
         }
         cancellableReadTasks[operationID] = task
+        if deviceScoped {
+            deviceScopedReadTaskIDs.insert(operationID)
+        }
         await withTaskCancellationHandler {
             await task.value
         } onCancel: {
@@ -7141,6 +7230,12 @@ public final class AppModel: ObservableObject {
     private func beginTrackedOperation(blocksTermination: Bool = true) {
         operationActivity.begin(blocksTermination: blocksTermination)
         isBusy = operationActivity.isBusy
+    }
+
+    private func cancelDeviceScopedReadWork() {
+        for operationID in deviceScopedReadTaskIDs {
+            cancellableReadTasks[operationID]?.cancel()
+        }
     }
 
     private func endTrackedOperation(blocksTermination: Bool = true) {
@@ -7481,6 +7576,7 @@ public final class AppModel: ObservableObject {
         selectedAppStorageLocation = nil
         expandedStorageAppPackageIDs.removeAll()
         loadingStorageAppPackageIDs.removeAll()
+        packageLoadRevision &+= 1
         captureAppChoices.removeAll()
         captureAppChoicesDeviceSerial = nil
         thumbnailURLs.removeAll()
@@ -7496,6 +7592,12 @@ public final class AppModel: ObservableObject {
         fileUndoStack.removeAll()
         fileRedoStack.removeAll()
         fileHistoryRevision &+= 1
+    }
+
+    private func invalidateADBDeviceSession() {
+        adbDeviceSessionRevision &+= 1
+        cancelDeviceScopedReadWork()
+        resetADBSessionStateForDeviceChange()
     }
 
     private func clearADBOnlyState(clearDevices: Bool = false) {
