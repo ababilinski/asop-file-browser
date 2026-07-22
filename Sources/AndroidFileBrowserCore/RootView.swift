@@ -7,6 +7,7 @@ public struct RootView: View {
     @ObservedObject private var model: AppModel
     @ObservedObject private var settings: AppSettings
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var isAppPackageDropTargeted = false
 
     public init(model: AppModel) {
         self.model = model
@@ -44,6 +45,31 @@ public struct RootView: View {
                 .padding(.trailing, 24)
         }
         .containerBackground(.regularMaterial, for: .window)
+        .overlay {
+            if isAppPackageDropTargeted {
+                AppPackageDropOverlay(deviceName: model.selectedDevice?.title)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        .overlay(alignment: .top) {
+            if let activity = model.appInstallActivity {
+                AppInstallProgressNotification(activity: activity)
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(10)
+            }
+        }
+        .animation(.snappy(duration: 0.22), value: model.appInstallActivity)
+        .localFileDropTarget(
+            isEnabled: model.appInstallActivity == nil,
+            acceptsDrop: AppPackageInstaller.isSupportedSelection
+        ) { targeted in
+            withAnimation(.snappy(duration: 0.18)) {
+                isAppPackageDropTargeted = targeted
+            }
+        } onDrop: { urls in
+            Task { await model.installAppPackages(urls: urls) }
+        }
         .fileImporter(
             isPresented: $model.showUploadImporter,
             allowedContentTypes: [.item],
@@ -59,11 +85,16 @@ public struct RootView: View {
         }
         .fileImporter(
             isPresented: $model.showAPKImporter,
-            allowedContentTypes: [UTType(filenameExtension: "apk") ?? .item],
-            allowsMultipleSelection: false
+            allowedContentTypes: [
+                UTType(filenameExtension: "apk") ?? .data,
+                UTType(filenameExtension: "xapk") ?? .data,
+                UTType(filenameExtension: "apks") ?? .data,
+                .zip
+            ],
+            allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                Task { await model.installAPK(url: url) }
+            if case .success(let urls) = result {
+                Task { await model.installAppPackages(urls: urls) }
             }
         }
         .alert(item: $model.alert) { alert in
@@ -90,6 +121,9 @@ public struct RootView: View {
         }
         .sheet(item: $model.pendingBatchRenameRequest) { request in
             BatchRenameSheet(model: model, request: request)
+        }
+        .sheet(item: $model.pendingAppInstallRecovery) { request in
+            AppInstallRecoverySheet(model: model, request: request)
         }
         .sheet(item: $model.adbQRPairingSession, onDismiss: {
             model.adbQRPairingSheetDidDismiss()

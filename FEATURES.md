@@ -58,7 +58,7 @@ Developer Options adds features that need USB or Wi-Fi debugging.
 
 Phone Tools are available with Developer Options enabled.
 
-- **Manage apps.** Install an APK; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions.
+- **Manage apps.** Drag an APK, XAPK, APKS, or split ZIP from Finder to install it; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions. Downgrades, signature conflicts, incomplete splits, and other install failures get guided recovery instead of raw command output.
 - **Take screenshots.** Capture one or more connected displays. Multiple displays
   are saved side by side in one image.
 - **Record the screen.** Record one or more connected displays. Multiple displays

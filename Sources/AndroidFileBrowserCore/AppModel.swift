@@ -200,6 +200,8 @@ public final class AppModel: ObservableObject {
     @Published public var showUploadImporter = false
     @Published public var uploadTargetPath: String?
     @Published public var showAPKImporter = false
+    @Published public private(set) var appInstallActivity: AppInstallActivity?
+    @Published public var pendingAppInstallRecovery: AppInstallRecoveryRequest?
     @Published public var previewURL: URL?
     @Published public var thumbnailURLs: [AndroidFile.ID: URL] = [:]
     @Published public private(set) var cacheUsage = AppCacheUsage.zero
@@ -5375,12 +5377,111 @@ public final class AppModel: ObservableObject {
     }
 
     public func installAPK(url: URL) async {
-        await perform("Installing \(url.lastPathComponent)...") {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
-            try await appManager.install(device: device, apkURL: url)
-            try await loadPackagesThrowing()
-            statusMessage = "Installed \(url.lastPathComponent)."
+        await installAppPackages(urls: [url])
+    }
+
+    public func installAppPackages(
+        urls: [URL],
+        options: AppInstallOptions = AppInstallOptions(),
+        replacingPackageName: String? = nil,
+        targetDeviceID: AndroidDevice.ID? = nil
+    ) async {
+        guard !isPreparingForTermination, appInstallActivity == nil else { return }
+        let targetDevice = targetDeviceID.flatMap { id in devices.first { $0.id == id } }
+        guard let device = targetDeviceID == nil ? selectedDevice : targetDevice,
+              device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the package again."
+            )
+            return
         }
+
+        let displayName = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) split APKs"
+        let activity = AppInstallActivity(
+            title: replacingPackageName == nil ? "Installing \(displayName)" : "Replacing existing app",
+            detail: "Installing on \(device.title)…"
+        )
+        appInstallActivity = activity
+        pendingAppInstallRecovery = nil
+        beginTrackedOperation(blocksTermination: true)
+        statusMessage = activity.detail
+        defer {
+            appInstallActivity = nil
+            endTrackedOperation(blocksTermination: true)
+        }
+
+        do {
+            if let replacingPackageName {
+                statusMessage = "Removing the existing copy of \(replacingPackageName)…"
+                try await appManager.uninstall(device: device, packageName: replacingPackageName)
+            }
+            let result = try await appManager.install(
+                device: device,
+                packageURLs: urls,
+                options: options
+            )
+            if selectedDevice?.id == device.id {
+                try await loadPackagesThrowing()
+            }
+            let expansionDetail = result.copiedExpansionFileCount > 0
+                ? " and copied \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                : ""
+            statusMessage = "Installed \(displayName) on \(device.title)\(expansionDetail)."
+        } catch let conflict as AppInstallConflict {
+            if conflict.kind == .newerVersionInstalled, options.allowDowngrade {
+                alert = UserAlert(
+                    title: "Downgrade Not Allowed",
+                    message: "Android still refused this older version. Many release apps and newer Android versions cannot be downgraded without removing the installed copy first. To protect app data, ASOP File Browser did not remove it."
+                )
+                statusMessage = "Android did not allow the downgrade."
+            } else if conflict.kind == .differentSignature, conflict.packageName == nil {
+                alert = UserAlert(
+                    title: "App Signed Differently",
+                    message: "Android won’t replace the installed app because the new package has a different signature. Uninstall the existing app first if you accept losing its app data, then try again."
+                )
+                statusMessage = "App signature does not match the installed copy."
+            } else {
+                pendingAppInstallRecovery = AppInstallRecoveryRequest(
+                    urls: urls,
+                    conflict: conflict,
+                    deviceID: device.id,
+                    deviceName: device.title
+                )
+                statusMessage = conflict.kind == .newerVersionInstalled
+                    ? "A newer version is already installed."
+                    : "App signature does not match the installed copy."
+            }
+        } catch let installError as AppPackageInstallError {
+            alert = UserAlert(title: installError.title, message: installError.localizedDescription)
+            statusMessage = installError.title
+        } catch {
+            handleOperationError(error)
+        }
+    }
+
+    public func retryPendingAppInstallAllowingDowngrade() async {
+        guard let request = pendingAppInstallRecovery else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            options: AppInstallOptions(allowDowngrade: true),
+            targetDeviceID: request.deviceID
+        )
+    }
+
+    public func replacePendingAppInstall() async {
+        guard let request = pendingAppInstallRecovery,
+              let packageName = request.conflict.packageName else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            replacingPackageName: packageName,
+            targetDeviceID: request.deviceID
+        )
     }
 
     public func uninstall(package: AndroidPackage) async {

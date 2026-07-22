@@ -830,6 +830,10 @@ public actor ADBClient {
         self.runner = runner
     }
 
+    public func resolvedExecutableURL() async throws -> URL {
+        try await workingADBURL()
+    }
+
     public func run(
         _ arguments: [String],
         allowFailure: Bool = false,

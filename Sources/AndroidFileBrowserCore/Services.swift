@@ -821,10 +821,12 @@ public actor AndroidFileRepository {
 public actor AppManagerService {
     private let adb: ADBClient
     private let metadataBridge: AppMetadataBridge
+    private let installer: AppPackageInstaller
 
     public init(adb: ADBClient) {
         self.adb = adb
         self.metadataBridge = AppMetadataBridge(adb: adb)
+        self.installer = AppPackageInstaller(adb: adb)
     }
 
     public func packages(device: AndroidDevice, kind: AppKind) async throws -> [AndroidPackage] {
@@ -1021,8 +1023,16 @@ public actor AppManagerService {
         return Int64(trimmed)
     }
 
+    public func install(
+        device: AndroidDevice,
+        packageURLs: [URL],
+        options: AppInstallOptions = AppInstallOptions()
+    ) async throws -> AppInstallationResult {
+        try await installer.install(device: device, urls: packageURLs, options: options)
+    }
+
     public func install(device: AndroidDevice, apkURL: URL) async throws {
-        _ = try await adb.run(["-s", device.serial, "install", "-r", apkURL.path])
+        _ = try await install(device: device, packageURLs: [apkURL])
     }
 
     public func uninstall(device: AndroidDevice, packageName: String) async throws {
