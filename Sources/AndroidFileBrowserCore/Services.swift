@@ -820,14 +820,18 @@ public actor AndroidFileRepository {
 
 public actor AppManagerService {
     private let adb: ADBClient
+    private let metadataBridge: AppMetadataBridge
+    private let installer: AppPackageInstaller
 
     public init(adb: ADBClient) {
         self.adb = adb
+        self.metadataBridge = AppMetadataBridge(adb: adb)
+        self.installer = AppPackageInstaller(adb: adb)
     }
 
     public func packages(device: AndroidDevice, kind: AppKind) async throws -> [AndroidPackage] {
-        let systemResult = try await adb.shell(serial: device.serial, "pm list packages -f -s")
-        let userResult = try await adb.shell(serial: device.serial, "pm list packages -f -3")
+        let systemResult = try await adb.shell(serial: device.serial, "pm list packages -f -s", timeout: 15)
+        let userResult = try await adb.shell(serial: device.serial, "pm list packages -f -3", timeout: 15)
         let systemPackages = ADBParsers.parsePackages(systemResult.stdout, kind: .system)
         let systemPackageNames = Set(systemPackages.map(\.packageName))
         let userPackages = ADBParsers.parsePackages(userResult.stdout, kind: .user)
@@ -861,18 +865,46 @@ public actor AppManagerService {
         return packageNames.isEmpty ? nil : packageNames
     }
 
+    func presentations(
+        device: AndroidDevice,
+        packages: [AndroidPackage],
+        onBatch: (@Sendable ([String: AndroidAppPresentation]) async throws -> Void)? = nil
+    ) async throws -> [String: AndroidAppPresentation] {
+        try await metadataBridge.presentations(
+            device: device,
+            packages: packages,
+            onBatch: onBatch
+        )
+    }
+
     public func details(device: AndroidDevice, package: AndroidPackage) async throws -> AndroidPackage {
-        let result = try await adb.shell(serial: device.serial, "dumpsys package \(ADBClient.quoteRemote(package.packageName))", allowFailure: true)
+        let result = try await adb.shell(
+            serial: device.serial,
+            "dumpsys package \(ADBClient.quoteRemote(package.packageName))",
+            allowFailure: true,
+            timeout: 12
+        )
         var updated = ADBParsers.parsePackageDetails(package: package, dumpsys: result.stdout)
-        updated.apkSizeBytes = try? await apkSizeBytes(device: device, package: updated)
-        updated.storageStats = try? await storageStats(device: device, package: updated)
-        updated.appStorageLocationSizes = await appStorageLocationSizes(device: device, package: updated)
+        try Task.checkCancellation()
+        do {
+            updated.apkSizeBytes = try await apkSizeBytes(device: device, package: updated)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {}
+        try Task.checkCancellation()
+        do {
+            updated.storageStats = try await storageStats(device: device, package: updated)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {}
+        try Task.checkCancellation()
+        updated.appStorageLocationSizes = try await appStorageLocationSizes(device: device, package: updated)
         return updated
     }
 
     public func runningProcessNames(device: AndroidDevice) async throws -> Set<String> {
         let command = "ps -A -o NAME 2>/dev/null || ps -A 2>/dev/null || ps 2>/dev/null"
-        let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+        let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 10)
         return ADBParsers.parseRunningProcessNames(result.stdout)
     }
 
@@ -936,7 +968,8 @@ public actor AppManagerService {
         let result = try await adb.shell(
             serial: device.serial,
             "stat -c %s \(ADBClient.quoteRemote(apkPath)) 2>/dev/null",
-            allowFailure: true
+            allowFailure: true,
+            timeout: 8
         )
         guard result.exitCode == 0 else { return nil }
         return Int64(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -951,7 +984,8 @@ public actor AppManagerService {
         ]
 
         for command in commands {
-            let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+            try Task.checkCancellation()
+            let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 8)
             guard result.exitCode == 0 else { continue }
             if let stats = ADBParsers.parseAppStorageStats(result.stdout) {
                 return stats
@@ -960,15 +994,21 @@ public actor AppManagerService {
         return nil
     }
 
-    private func appStorageLocationSizes(device: AndroidDevice, package: AndroidPackage) async -> [AppStorageLocation.Kind: Int64] {
+    private func appStorageLocationSizes(device: AndroidDevice, package: AndroidPackage) async throws -> [AppStorageLocation.Kind: Int64] {
         var sizes: [AppStorageLocation.Kind: Int64] = [:]
         for location in package.appStorageLocations {
-            guard location.kind != .userData,
-                  let bytes = try? await directorySizeBytesIfVisible(device: device, path: location.path),
-                  bytes > 0 else {
+            try Task.checkCancellation()
+            guard location.kind != .userData else { continue }
+            do {
+                if let bytes = try await directorySizeBytesIfVisible(device: device, path: location.path),
+                   bytes > 0 {
+                    sizes[location.kind] = bytes
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
                 continue
             }
-            sizes[location.kind] = bytes
         }
         return sizes
     }
@@ -976,15 +1016,23 @@ public actor AppManagerService {
     private func directorySizeBytesIfVisible(device: AndroidDevice, path: String) async throws -> Int64? {
         let quoted = ADBClient.quoteRemote(path)
         let command = "if [ -d \(quoted) ]; then du -sk \(quoted) 2>/dev/null | awk '{s += $1} END {printf \"%.0f\", s * 1024}'; fi"
-        let result = try await adb.shell(serial: device.serial, command, allowFailure: true)
+        let result = try await adb.shell(serial: device.serial, command, allowFailure: true, timeout: 8)
         guard result.exitCode == 0 else { return nil }
         let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return Int64(trimmed)
     }
 
+    public func install(
+        device: AndroidDevice,
+        packageURLs: [URL],
+        options: AppInstallOptions = AppInstallOptions()
+    ) async throws -> AppInstallationResult {
+        try await installer.install(device: device, urls: packageURLs, options: options)
+    }
+
     public func install(device: AndroidDevice, apkURL: URL) async throws {
-        _ = try await adb.run(["-s", device.serial, "install", "-r", apkURL.path])
+        _ = try await install(device: device, packageURLs: [apkURL])
     }
 
     public func uninstall(device: AndroidDevice, packageName: String) async throws {

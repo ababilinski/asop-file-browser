@@ -8,6 +8,68 @@ final class TransferQueueTests: XCTestCase {
         XCTAssertEqual(TransferJobKind.move.symbol, "arrow.right.circle")
     }
 
+    func testAppInstallJobUsesAppPresentation() {
+        XCTAssertEqual(TransferJobKind.appInstall.title, "App Install")
+        XCTAssertEqual(TransferJobKind.appInstall.symbol, "arrow.down.app")
+    }
+
+    func testQueuedInstallJobsCanBeReorderedAndRemoved() async throws {
+        let queue = TransferQueue()
+        queue.maxActiveTransfers = 1
+        let groupID = queue.enqueueGroup(
+            kind: .appInstall,
+            title: "Install 3 apps",
+            subtitle: "Test phone",
+            source: TransferEndpoint(kind: .mac, path: "/tmp"),
+            destination: TransferEndpoint(kind: .adb, deviceID: "phone", path: "apps")
+        )
+        let exclusiveGroup = "app-install:phone"
+        let firstID = queue.enqueue(
+            kind: .appInstall,
+            title: "First.apk",
+            subtitle: "Installing",
+            source: TransferEndpoint(kind: .mac, path: "/tmp/First.apk"),
+            destination: TransferEndpoint(kind: .adb, deviceID: "phone", path: "apps"),
+            parentID: groupID,
+            exclusiveGroup: exclusiveGroup
+        ) { _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return TransferJobResult(message: "Installed")
+        }
+        let secondID = queue.enqueue(
+            kind: .appInstall,
+            title: "Second.apk",
+            subtitle: "Waiting",
+            source: TransferEndpoint(kind: .mac, path: "/tmp/Second.apk"),
+            destination: TransferEndpoint(kind: .adb, deviceID: "phone", path: "apps"),
+            parentID: groupID,
+            exclusiveGroup: exclusiveGroup
+        ) { _ in
+            TransferJobResult(message: "Installed")
+        }
+        let thirdID = queue.enqueue(
+            kind: .appInstall,
+            title: "Third.apk",
+            subtitle: "Waiting",
+            source: TransferEndpoint(kind: .mac, path: "/tmp/Third.apk"),
+            destination: TransferEndpoint(kind: .adb, deviceID: "phone", path: "apps"),
+            parentID: groupID,
+            exclusiveGroup: exclusiveGroup
+        ) { _ in
+            TransferJobResult(message: "Installed")
+        }
+
+        XCTAssertEqual(queue.job(id: firstID)?.state, .running)
+        XCTAssertTrue(queue.moveQueuedJob(thirdID, earlier: true))
+        XCTAssertEqual(queue.children(of: groupID).map(\.id), [firstID, thirdID, secondID])
+        XCTAssertTrue(queue.removeQueuedJob(secondID))
+        XCTAssertNil(queue.job(id: secondID))
+
+        try await waitForQueueToFinish(queue)
+        XCTAssertEqual(queue.job(id: groupID)?.state, .completed)
+        XCTAssertEqual(queue.children(of: groupID).map(\.id), [firstID, thirdID])
+    }
+
     func testDeferredMoveStaysOutOfPanelUntilRevealed() async throws {
         let queue = TransferQueue()
         var jobID: UUID?

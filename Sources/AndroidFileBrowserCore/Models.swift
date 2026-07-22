@@ -1139,7 +1139,7 @@ public enum AppColumn: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var label: String {
         switch self {
-        case .package: "Package"
+        case .package: "App"
         case .status: "Status"
         case .kind: "Type"
         case .enabled: "Enabled"
@@ -1176,6 +1176,8 @@ public struct AndroidPackage: Identifiable, Hashable, Codable, Sendable {
     public let apkPath: String?
     public var kind: AppKind
     public var isRunning: Bool = false
+    public var appLabel: String? = nil
+    public var iconPNGData: Data? = nil
     public var apkSizeBytes: Int64?
     public var enabled: Bool?
     public var versionName: String?
@@ -1189,12 +1191,46 @@ public struct AndroidPackage: Identifiable, Hashable, Codable, Sendable {
     var appStorageLocationSizes: [AppStorageLocation.Kind: Int64] = [:]
 
     public var displayName: String {
-        packageName
+        if let appLabel = appLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !appLabel.isEmpty {
+            return appLabel
+        }
+
+        let packageComponent = packageName
             .split(separator: ".")
             .last
-            .map(String.init)?
-            .replacingOccurrences(of: "_", with: " ")
+            .map(String.init)
             ?? packageName
+        let words = packageComponent
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+        guard !words.isEmpty else { return packageName }
+        return words.map { word in
+            let value = String(word)
+            guard value == value.lowercased() else { return value }
+            return value.prefix(1).uppercased() + value.dropFirst()
+        }
+        .joined(separator: " ")
+    }
+
+    var displayInitials: String {
+        let words = displayName.split { character in
+            !character.isLetter && !character.isNumber
+        }
+        if words.count >= 2 {
+            return words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        }
+        return String((words.first ?? Substring("?"))).prefix(2).uppercased()
+    }
+
+    var artworkPaletteIndex: Int {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in packageName.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Int(hash % 8)
     }
 
     var appStorageLocations: [AppStorageLocation] {

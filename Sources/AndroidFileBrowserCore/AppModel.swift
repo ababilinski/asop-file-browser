@@ -143,7 +143,7 @@ public final class AppModel: ObservableObject {
     @Published public var selectedDeviceID: AndroidDevice.ID? {
         didSet {
             guard oldValue != selectedDeviceID else { return }
-            resetADBSessionStateForDeviceChange()
+            invalidateADBDeviceSession()
         }
     }
     @Published public var sidebarSelection: SidebarDestination? {
@@ -200,6 +200,8 @@ public final class AppModel: ObservableObject {
     @Published public var showUploadImporter = false
     @Published public var uploadTargetPath: String?
     @Published public var showAPKImporter = false
+    @Published public private(set) var isInstallingAppPackage = false
+    @Published public var pendingAppInstallRecovery: AppInstallRecoveryRequest?
     @Published public var previewURL: URL?
     @Published public var thumbnailURLs: [AndroidFile.ID: URL] = [:]
     @Published public private(set) var cacheUsage = AppCacheUsage.zero
@@ -287,6 +289,7 @@ public final class AppModel: ObservableObject {
     private var lastSelectedFileID: AndroidFile.ID?
     private var keyboardSelectionAnchorFileID: AndroidFile.ID?
     private var lastSelectedPackageID: AndroidPackage.ID?
+    private var packageLoadRevision = 0
     private var searchTask: Task<Void, Never>?
     private var pendingInlineRenameWorkItem: DispatchWorkItem?
     private var inlineRenameBlockedBySelectionFileID: AndroidFile.ID?
@@ -310,6 +313,9 @@ public final class AppModel: ObservableObject {
     private var fileRedoStack: [FileHistoryOperation] = []
     private var operationActivity = OperationActivityTracker()
     private var cancellableReadTasks: [UUID: Task<Void, Never>] = [:]
+    private var deviceScopedReadTaskIDs = Set<UUID>()
+    private var adbDeviceSessionRevision = 0
+    private var isPollingDeviceConnections = false
     private var adbNavigationTask: Task<Void, Never>?
     private var browserReconciliationTask: Task<Void, Never>?
     private var browserReconciliationRequestID: UUID?
@@ -421,7 +427,8 @@ public final class AppModel: ObservableObject {
     }
 
     public var selectedDevice: AndroidDevice? {
-        devices.first { $0.id == selectedDeviceID } ?? devices.first
+        guard let selectedDeviceID else { return nil }
+        return devices.first { $0.id == selectedDeviceID }
     }
 
     public var phoneControlSession: PhoneControlSession? {
@@ -443,6 +450,10 @@ public final class AppModel: ObservableObject {
 
     public var hasReadyADBDevice: Bool {
         selectedDevice?.state == .device
+    }
+
+    public var isAppPackageInstallInProgress: Bool {
+        isInstallingAppPackage || transferQueue.unfinishedJobs.contains { $0.kind == .appInstall }
     }
 
     public var trashItemsAddedThisSessionCount: Int {
@@ -511,6 +522,12 @@ public final class AppModel: ObservableObject {
 
     public var hasInspectableDeviceSurface: Bool {
         hasReadyADBDevice || !usbTransferManager.devices.isEmpty
+    }
+
+    var showsPhoneCaptureToolbarControls: Bool {
+        connectionMode == .adb
+            && hasReadyADBDevice
+            && !usbTransferManager.isADBReleasedForMTPSession
     }
 
     public var shouldShowDetailInspector: Bool {
@@ -1364,7 +1381,9 @@ public final class AppModel: ObservableObject {
     }
 
     public var canSwitchADBDevice: Bool {
-        !isBusy && !isSwitchingADBDevice && !isRunningFileHistoryOperation
+        !isSwitchingADBDevice
+            && !operationActivity.hasTerminationBlockingActivity
+            && !isRunningFileHistoryOperation
     }
 
     public func refreshLaunchConnections() async {
@@ -1383,28 +1402,37 @@ public final class AppModel: ObservableObject {
         }
         isSwitchingADBDevice = true
         selectedDeviceID = id
+        isSwitchingADBDevice = false
         guard selectedDevice?.state == .device else {
-            isSwitchingADBDevice = false
-            statusMessage = "Select a connected phone."
+            statusMessage = "Select a connected device."
             return
         }
+        loadSelectedADBDeviceInBackground()
+    }
+
+    private func loadSelectedADBDeviceInBackground() {
+        guard let deviceID = selectedDeviceID,
+              selectedDevice?.state == .device else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isSwitchingADBDevice = false }
-            await self.performCancellableRead("Loading phone...") {
+            await self.performCancellableRead("Loading device...") {
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 try await self.refreshStorage()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 await self.refreshBatteryStatus()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 if self.connectionMode == .adb {
                     try await self.refreshCurrentSurface()
                 }
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 self.statusMessage = "Ready."
             }
         }
     }
 
     public func refreshDevices(requestUSBTransferIfADBUnavailable: Bool = false) async {
-        await performCancellableRead("Refreshing devices...") { [self] in
+        await performCancellableRead("Refreshing devices...", deviceScoped: false) { [self] in
             let found: [AndroidDevice]
             do {
                 found = try await deviceManager.devices()
@@ -1458,30 +1486,43 @@ public final class AppModel: ObservableObject {
     }
 
     public func pollDeviceConnections() async {
-        guard !isPreparingForTermination, !isBusy else { return }
+        guard !isPreparingForTermination,
+              !isPollingDeviceConnections else { return }
         if isUSBTransferSelected, usbTransferManager.isADBReleasedForMTPSession {
             statusMessage = usbTransferManager.statusMessage
             return
         }
 
+        isPollingDeviceConnections = true
+        defer { isPollingDeviceConnections = false }
+        let wasBusy = isBusy
+
         do {
             let found = try await deviceManager.devices()
             adbRuntimeIssue = nil
             suppressedToolSetup.remove(.adb)
+            let previousSelectedDeviceID = selectedDeviceID
             let adbBecameReady = applyADBDeviceSnapshot(found)
-            if adbBecameReady, connectionMode == .adb {
-                prepareADBReadySurfaceForTransition()
-                try await refreshStorage()
-                try await refreshCurrentSurface()
-            }
-            if selectedDevice?.state == .device {
+            let selectedDeviceChanged = previousSelectedDeviceID != selectedDeviceID
+            if (adbBecameReady || selectedDeviceChanged),
+               connectionMode == .adb,
+               selectedDevice?.state == .device {
+                if adbBecameReady {
+                    prepareADBReadySurfaceForTransition()
+                }
+                loadSelectedADBDeviceInBackground()
+            } else if !wasBusy, selectedDevice?.state == .device {
                 await refreshBatteryStatus()
             }
-            await refreshPhoneControlBatteryStatuses()
+            if !wasBusy {
+                await refreshPhoneControlBatteryStatuses()
+            }
 
-            statusMessage = adbBecameReady
-                ? "ADB connected. Full device browsing is available."
-                : connectionStatusMessage(adbDevices: found)
+            if !wasBusy || selectedDeviceChanged || found.isEmpty {
+                statusMessage = adbBecameReady
+                    ? "ADB connected. Full device browsing is available."
+                    : connectionStatusMessage(adbDevices: found)
+            }
         } catch FileOperationError.missingTool {
             clearADBOnlyState(clearDevices: true)
             adbRuntimeIssue = "Phone tools are not installed."
@@ -5344,12 +5385,191 @@ public final class AppModel: ObservableObject {
     }
 
     public func installAPK(url: URL) async {
-        await perform("Installing \(url.lastPathComponent)...") {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
-            try await appManager.install(device: device, apkURL: url)
-            try await loadPackagesThrowing()
-            statusMessage = "Installed \(url.lastPathComponent)."
+        await installAppPackages(urls: [url])
+    }
+
+    public func installDroppedAppPackages(urls: [URL]) async {
+        var seenPaths = Set<String>()
+        let uniqueURLs = urls.filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
+        if uniqueURLs.count > 1,
+           uniqueURLs.allSatisfy({ AppPackageFormat.format(for: $0) == .apk }) {
+            enqueueDroppedAPKInstalls(uniqueURLs)
+        } else {
+            await installAppPackages(urls: uniqueURLs)
         }
+    }
+
+    private func enqueueDroppedAPKInstalls(_ urls: [URL]) {
+        guard !isPreparingForTermination else { return }
+        guard let device = selectedDevice, device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the packages again."
+            )
+            return
+        }
+
+        pendingAppInstallRecovery = nil
+        let groupID = transferQueue.enqueueGroup(
+            kind: .appInstall,
+            title: "Install \(urls.count) apps",
+            subtitle: "Installing on \(device.title)",
+            source: TransferEndpoint(kind: .mac, path: urls.first?.deletingLastPathComponent().path ?? "", displayName: "Finder"),
+            destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+            itemKind: .file
+        )
+        let exclusiveGroup = "app-install:\(device.id)"
+
+        for url in urls {
+            transferQueue.enqueue(
+                kind: .appInstall,
+                title: url.lastPathComponent,
+                subtitle: "Waiting to install on \(device.title)",
+                source: TransferEndpoint(kind: .mac, path: url.path, displayName: url.lastPathComponent),
+                destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+                parentID: groupID,
+                totalBytes: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init),
+                exclusiveGroup: exclusiveGroup
+            ) { [weak self, appManager] controller in
+                guard let self else { throw CancellationError() }
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Installing")
+                let result = try await appManager.install(device: device, packageURLs: [url])
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Refreshing app list")
+                await self.refreshPackageListAfterInstall(on: device)
+                let expansionDetail = result.copiedExpansionFileCount > 0
+                    ? " and \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                    : ""
+                self.statusMessage = "Installed \(url.lastPathComponent) on \(device.title)\(expansionDetail)."
+                return TransferJobResult(message: "Installed")
+            }
+        }
+
+        transferQueue.isPanelExpanded = true
+        statusMessage = "Queued \(urls.count) apps for installation on \(device.title)."
+    }
+
+    public func installAppPackages(
+        urls: [URL],
+        options: AppInstallOptions = AppInstallOptions(),
+        replacingPackageName: String? = nil,
+        targetDeviceID: AndroidDevice.ID? = nil
+    ) async {
+        guard !isPreparingForTermination, !isAppPackageInstallInProgress else { return }
+        let targetDevice = targetDeviceID.flatMap { id in devices.first { $0.id == id } }
+        guard let device = targetDeviceID == nil ? selectedDevice : targetDevice,
+              device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the package again."
+            )
+            return
+        }
+
+        let displayName = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) split APKs"
+        isInstallingAppPackage = true
+        pendingAppInstallRecovery = nil
+        beginTrackedOperation(blocksTermination: true)
+        statusMessage = replacingPackageName == nil
+            ? "Installing \(displayName) on \(device.title)…"
+            : "Replacing existing app on \(device.title)…"
+        defer {
+            isInstallingAppPackage = false
+            endTrackedOperation(blocksTermination: true)
+        }
+
+        do {
+            if let replacingPackageName {
+                statusMessage = "Removing the existing copy of \(replacingPackageName)…"
+                try await appManager.uninstall(device: device, packageName: replacingPackageName)
+            }
+            let result = try await appManager.install(
+                device: device,
+                packageURLs: urls,
+                options: options
+            )
+            await refreshPackageListAfterInstall(on: device)
+            let expansionDetail = result.copiedExpansionFileCount > 0
+                ? " and copied \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                : ""
+            statusMessage = "Installed \(displayName) on \(device.title)\(expansionDetail)."
+        } catch let conflict as AppInstallConflict {
+            if conflict.kind == .newerVersionInstalled, options.allowDowngrade {
+                alert = UserAlert(
+                    title: "Downgrade Not Allowed",
+                    message: "Android still refused this older version. Many release apps and newer Android versions cannot be downgraded without removing the installed copy first. To protect app data, ASOP File Browser did not remove it."
+                )
+                statusMessage = "Android did not allow the downgrade."
+            } else if conflict.kind == .differentSignature, conflict.packageName == nil {
+                alert = UserAlert(
+                    title: "App Signed Differently",
+                    message: "Android won’t replace the installed app because the new package has a different signature. Uninstall the existing app first if you accept losing its app data, then try again."
+                )
+                statusMessage = "App signature does not match the installed copy."
+            } else {
+                pendingAppInstallRecovery = AppInstallRecoveryRequest(
+                    urls: urls,
+                    conflict: conflict,
+                    deviceID: device.id,
+                    deviceName: device.title
+                )
+                statusMessage = conflict.kind == .newerVersionInstalled
+                    ? "A newer version is already installed."
+                    : "App signature does not match the installed copy."
+            }
+        } catch let installError as AppPackageInstallError {
+            alert = UserAlert(title: installError.title, message: installError.localizedDescription)
+            statusMessage = installError.title
+        } catch {
+            handleOperationError(error)
+        }
+    }
+
+    private func refreshPackageListAfterInstall(on device: AndroidDevice) async {
+        guard selectedDevice?.id == device.id, device.state == .device else { return }
+        let requestedKind = appKind
+        guard let loadedPackages = try? await appManager.packages(device: device, kind: requestedKind),
+              selectedDevice?.id == device.id,
+              appKind == requestedKind else { return }
+
+        let existingByID = Dictionary(uniqueKeysWithValues: packages.map { ($0.id, $0) })
+        let mergedPackages = loadedPackages.map { package -> AndroidPackage in
+            guard let existing = existingByID[package.id] else { return package }
+            var merged = package
+            merged.isRunning = existing.isRunning
+            merged.appLabel = existing.appLabel
+            merged.iconPNGData = existing.iconPNGData
+            return merged
+        }
+        applyLoadedPackages(mergedPackages)
+    }
+
+    public func retryPendingAppInstallAllowingDowngrade() async {
+        guard let request = pendingAppInstallRecovery else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            options: AppInstallOptions(allowDowngrade: true),
+            targetDeviceID: request.deviceID
+        )
+    }
+
+    public func replacePendingAppInstall() async {
+        guard let request = pendingAppInstallRecovery,
+              let packageName = request.conflict.packageName else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            replacingPackageName: packageName,
+            targetDeviceID: request.deviceID
+        )
     }
 
     public func uninstall(package: AndroidPackage) async {
@@ -6720,22 +6940,113 @@ public final class AppModel: ObservableObject {
     }
 
     private func loadPackagesThrowing() async throws {
-        guard let device = selectedDevice else { throw FileOperationError.noDevice }
-        async let runningProcessNames = appManager.runningProcessNames(device: device)
+        guard let device = selectedDevice, device.state == .device else {
+            throw FileOperationError.noDevice
+        }
+        packageLoadRevision &+= 1
+        let loadRevision = packageLoadRevision
+        let requestedKind = appKind
         let basePackages = try await appManager.packages(device: device, kind: appKind)
-        var enriched: [AndroidPackage] = []
-        for package in basePackages {
-            enriched.append((try? await appManager.details(device: device, package: package)) ?? package)
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+
+        var visiblePackages = requestedKind == .all
+            ? basePackages
+            : basePackages.filter { $0.kind == requestedKind }
+        applyLoadedPackages(visiblePackages)
+        statusMessage = "Loaded \(visiblePackages.count) app\(visiblePackages.count == 1 ? "" : "s")."
+
+        let processNames: Set<String>
+        do {
+            processNames = try await appManager.runningProcessNames(device: device)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            processNames = []
         }
-        if appKind != .all {
-            enriched = enriched.filter { $0.kind == appKind }
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+        visiblePackages = markRunning(visiblePackages, processNames: processNames)
+        applyLoadedPackages(visiblePackages)
+
+        do {
+            let presentations = try await appManager.presentations(
+                device: device,
+                packages: visiblePackages
+            ) { [weak self] batch in
+                guard let self else { throw CancellationError() }
+                try await self.applyPackagePresentationBatch(
+                    batch,
+                    device: device,
+                    kind: requestedKind,
+                    revision: loadRevision
+                )
+            }
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            visiblePackages = visiblePackages.map { package in
+                guard let presentation = presentations[package.packageName] else { return package }
+                var presentedPackage = package
+                presentedPackage.appLabel = presentation.label
+                presentedPackage.iconPNGData = presentation.iconPNGData
+                return presentedPackage
+            }
+            applyLoadedPackages(visiblePackages)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Package names and deterministic artwork remain available when a
+            // device cannot provide richer launcher metadata.
         }
-        let processNames = (try? await runningProcessNames) ?? []
-        enriched = markRunning(enriched, processNames: processNames)
+
+        for package in visiblePackages {
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            let enrichedPackage: AndroidPackage
+            do {
+                enrichedPackage = try await appManager.details(device: device, package: package)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
+            }
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            guard let index = packages.firstIndex(where: { $0.id == enrichedPackage.id }) else { continue }
+            packages[index] = enrichedPackage
+        }
+    }
+
+    private func applyPackagePresentationBatch(
+        _ presentations: [String: AndroidAppPresentation],
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try validatePackageLoad(device: device, kind: kind, revision: revision)
+        packages = packages.map { package in
+            guard let presentation = presentations[package.packageName] else { return package }
+            var updated = package
+            updated.appLabel = presentation.label
+            updated.iconPNGData = presentation.iconPNGData
+            return updated
+        }
+    }
+
+    private func validatePackageLoad(
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try Task.checkCancellation()
+        guard packageLoadRevision == revision,
+              appKind == kind,
+              selectedDeviceID == device.id,
+              devices.contains(where: { $0.id == device.id && $0.state == .device }) else {
+            throw CancellationError()
+        }
+    }
+
+    private func applyLoadedPackages(_ loadedPackages: [AndroidPackage]) {
         let selectedIDsAtApply = selectedPackageIDs
         let lastSelectedIDAtApply = lastSelectedPackageID
-        let availableIDs = Set(enriched.map(\.id))
-        packages = enriched
+        let availableIDs = Set(loadedPackages.map(\.id))
+        packages = loadedPackages
         selectedPackageIDs = selectedIDsAtApply.intersection(availableIDs)
         expandedStorageAppPackageIDs = expandedStorageAppPackageIDs.intersection(availableIDs)
         loadingStorageAppPackageIDs = loadingStorageAppPackageIDs.intersection(availableIDs)
@@ -7013,8 +7324,8 @@ public final class AppModel: ObservableObject {
         let selectedDeviceIsReady = found.first { $0.id == selectedDeviceID }?.state == .device
         if selectedDeviceID == nil
             || !found.contains(where: { $0.id == selectedDeviceID })
-            || (!selectedDeviceIsReady && found.contains(where: { $0.state == .device })) {
-            selectedDeviceID = found.first(where: { $0.state == .device })?.id ?? found.first?.id
+            || !selectedDeviceIsReady {
+            selectedDeviceID = found.first(where: { $0.state == .device })?.id
         }
 
         if previousSelectedDeviceID != selectedDeviceID {
@@ -7024,6 +7335,10 @@ public final class AppModel: ObservableObject {
 
         if selectedDevice?.state != .device {
             clearADBOnlyState()
+            if hadReadyADBDevice, connectionMode == .adb {
+                shouldShowADBSetupAfterConnectionModeSwitch = true
+                sidebarSelection = nil
+            }
         }
 
         return !hadReadyADBDevice && hasReadyADBDevice
@@ -7085,14 +7400,17 @@ public final class AppModel: ObservableObject {
 
     func performCancellableRead(
         _ message: String,
+        deviceScoped: Bool = true,
         operation: @escaping @MainActor () async throws -> Void
     ) async {
         guard !isPreparingForTermination else { return }
 
         let operationID = UUID()
+        let deviceSessionRevision = adbDeviceSessionRevision
         beginTrackedOperation(blocksTermination: false)
         defer {
             cancellableReadTasks[operationID] = nil
+            deviceScopedReadTaskIDs.remove(operationID)
             endTrackedOperation(blocksTermination: false)
         }
         statusMessage = message
@@ -7100,14 +7418,23 @@ public final class AppModel: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                try Task.checkCancellation()
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else {
+                    throw CancellationError()
+                }
                 try await operation()
+                try Task.checkCancellation()
             } catch is CancellationError {
                 return
             } catch {
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else { return }
                 handleOperationError(error)
             }
         }
         cancellableReadTasks[operationID] = task
+        if deviceScoped {
+            deviceScopedReadTaskIDs.insert(operationID)
+        }
         await withTaskCancellationHandler {
             await task.value
         } onCancel: {
@@ -7141,6 +7468,12 @@ public final class AppModel: ObservableObject {
     private func beginTrackedOperation(blocksTermination: Bool = true) {
         operationActivity.begin(blocksTermination: blocksTermination)
         isBusy = operationActivity.isBusy
+    }
+
+    private func cancelDeviceScopedReadWork() {
+        for operationID in deviceScopedReadTaskIDs {
+            cancellableReadTasks[operationID]?.cancel()
+        }
     }
 
     private func endTrackedOperation(blocksTermination: Bool = true) {
@@ -7481,6 +7814,7 @@ public final class AppModel: ObservableObject {
         selectedAppStorageLocation = nil
         expandedStorageAppPackageIDs.removeAll()
         loadingStorageAppPackageIDs.removeAll()
+        packageLoadRevision &+= 1
         captureAppChoices.removeAll()
         captureAppChoicesDeviceSerial = nil
         thumbnailURLs.removeAll()
@@ -7496,6 +7830,12 @@ public final class AppModel: ObservableObject {
         fileUndoStack.removeAll()
         fileRedoStack.removeAll()
         fileHistoryRevision &+= 1
+    }
+
+    private func invalidateADBDeviceSession() {
+        adbDeviceSessionRevision &+= 1
+        cancelDeviceScopedReadWork()
+        resetADBSessionStateForDeviceChange()
     }
 
     private func clearADBOnlyState(clearDevices: Bool = false) {
