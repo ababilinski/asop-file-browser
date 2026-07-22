@@ -28,8 +28,31 @@ ADB_PINNED_SHA256="9fdf861259dc807937b13afdd5f053c7fda9f3b7726933fe0e0f45130ecb8
 ADB_NOTICE_PINNED_SHA256="f74735e1636534c2165b51815c4de870a2a06c24d8fe3e8c91149c841b81d33e"
 ADB_SOURCE_PROPERTIES_PINNED_SHA256="fbd87c8567afbc6dc78e140097fcde234f4a61fa7065e85081d43e442ccd3d24"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
+APP_ARCHITECTURE="${APP_ARCHITECTURE:-universal}"
 
-BUNDLE="$ROOT/.build/release/$APP_NAME.app"
+case "$APP_ARCHITECTURE" in
+  universal)
+    SWIFT_ARCHITECTURES=(--arch arm64 --arch x86_64)
+    REQUIRED_ARCHITECTURES=(arm64 x86_64)
+    DEFAULT_BUNDLE_DIRECTORY="$ROOT/.build/release"
+    ;;
+  arm64)
+    SWIFT_ARCHITECTURES=(--arch arm64)
+    REQUIRED_ARCHITECTURES=(arm64)
+    DEFAULT_BUNDLE_DIRECTORY="$ROOT/.build/release-arm64"
+    ;;
+  x86_64)
+    SWIFT_ARCHITECTURES=(--arch x86_64)
+    REQUIRED_ARCHITECTURES=(x86_64)
+    DEFAULT_BUNDLE_DIRECTORY="$ROOT/.build/release-x86_64"
+    ;;
+  *)
+    echo "APP_ARCHITECTURE must be universal, arm64, or x86_64." >&2
+    exit 2
+    ;;
+esac
+
+BUNDLE="${APP_BUNDLE_OUTPUT_PATH:-$DEFAULT_BUNDLE_DIRECTORY/$APP_NAME.app}"
 CONTENTS="$BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
@@ -39,20 +62,26 @@ ENTITLEMENTS="$ROOT/Resources/AndroidFileBrowser.entitlements"
 APP_ICON="$ROOT/Resources/AppIcon.icns"
 
 cd "$ROOT"
-swift build -c release --arch arm64 --arch x86_64
+swift build -c release "${SWIFT_ARCHITECTURES[@]}"
 
-APP_BINARY="$ROOT/.build/apple/Products/Release/AndroidFileBrowser"
-if [[ ! -x "$APP_BINARY" ]]; then
-  APP_BINARY="$ROOT/.build/release/AndroidFileBrowser"
-fi
+BUILD_OUTPUT="$(swift build --show-bin-path -c release "${SWIFT_ARCHITECTURES[@]}")"
+APP_BINARY="$BUILD_OUTPUT/AndroidFileBrowser"
+[[ -x "$APP_BINARY" ]] || {
+  echo "Missing release executable: $APP_BINARY" >&2
+  exit 1
+}
 
 APP_ARCHS="$(/usr/bin/lipo -archs "$APP_BINARY" 2>/dev/null || true)"
-for required_arch in arm64 x86_64; do
+for required_arch in "${REQUIRED_ARCHITECTURES[@]}"; do
   if [[ " $APP_ARCHS " != *" $required_arch "* ]]; then
     echo "Packaged app must support $required_arch; found: ${APP_ARCHS:-unknown}" >&2
     exit 1
   fi
 done
+if [[ "$(wc -w <<< "$APP_ARCHS" | tr -d ' ')" -ne "${#REQUIRED_ARCHITECTURES[@]}" ]]; then
+  echo "Packaged app has unexpected architectures: ${APP_ARCHS:-unknown}" >&2
+  exit 1
+fi
 
 rm -rf "$BUNDLE"
 mkdir -p "$MACOS" "$TOOLS/platform-tools" "$LICENSES"
@@ -66,6 +95,7 @@ cp "$APP_ICON" "$RESOURCES/AppIcon.icns"
 
 MTPKIT_BUNDLE=""
 for candidate in \
+  "$BUILD_OUTPUT/MTPKit_MTPKit.bundle" \
   "$ROOT/.build/apple/Products/Release/MTPKit_MTPKit.bundle" \
   "$ROOT/.build/release/MTPKit_MTPKit.bundle"; do
   if [[ -d "$candidate" ]]; then
