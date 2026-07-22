@@ -92,6 +92,25 @@ final class PhoneCapturePresentationTests: XCTestCase {
         XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .screenshot), [second.serial])
     }
 
+    func testCaptureToolbarControlsStayAvailableInAppsAndStorage() {
+        let model = makeModel()
+        let device = AndroidDevice(
+            serial: "connected",
+            state: .device,
+            model: "Connected Device",
+            product: nil,
+            transport: nil
+        )
+        model.devices = [device]
+        model.selectedDeviceID = device.id
+
+        model.sidebarSelection = .apps
+        XCTAssertTrue(model.showsPhoneCaptureToolbarControls)
+
+        model.sidebarSelection = .storage("internal")
+        XCTAssertTrue(model.showsPhoneCaptureToolbarControls)
+    }
+
     private func makeModel() -> AppModel {
         let suiteName = "AndroidFileBrowserCoreTests.PhoneCapturePresentation.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
