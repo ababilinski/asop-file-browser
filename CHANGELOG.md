@@ -28,6 +28,8 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Remove the short capture warmup from combined recordings so playback starts on content.
 - Keep a display's single static frame visible for the rest of a combined
   recording instead of failing the side-by-side export.
+- Updated the optional managed Phone Tools download to scrcpy 4.1.
+- Added separate Apple silicon and Intel downloads alongside the universal Mac app.
 
 ## [1.0.0] - 2026-07-17
 

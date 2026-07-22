@@ -1,12 +1,11 @@
 # Release process
 
 Pull requests cannot merge until the **Release readiness** check passes. That
-check builds and tests the app on Apple silicon and Intel runners, creates the
-universal app bundle, builds a DMG with an Applications shortcut and the app's
-icon as its mounted-volume icon, verifies its checksum, mounts it read-only,
-validates the contained app and volume icon again, and opens the app long enough
-to catch an immediate launch failure. The uploaded DMG must open on both Apple
-silicon and Intel runners.
+check builds and tests the app on Apple silicon and Intel runners, then creates
+universal, Apple silicon, and Intel app bundles. Each DMG has an Applications
+shortcut and the app's icon as its mounted-volume icon. CI verifies every
+checksum, mounts each image read-only, validates the contained app and volume
+icon, and opens the universal and matching native app on both runner types.
 
 Pull-request builds are ad-hoc signed and never receive Apple credentials.
 
@@ -135,24 +134,22 @@ build number. The automated release path uses the current validated `main`
 snapshot. This also lets a failed release include a later pipeline-only fix
 without changing the app version or bypassing its original version transition.
 
-The workflow builds and tests the candidate before it can access release
-credentials, including opening the tested app bundle and requiring it to remain
-running. A protected job then imports the temporary signing identity,
-signs the exact tested candidate, and runs Apple's local notarization-readiness
-check. If that check returns only its exact internal XProtect error, the
-workflow retries three times before deferring to Apple's notary service; every
-other local finding remains blocking. The job then creates and signs a
-read-only DMG, submits that DMG to Apple, requires an Accepted result and an
-issue-free notarization log, staples the ticket, checks Gatekeeper, and removes
-the credentials. The ZIP used to pass the tested app between jobs is private
-and is never published. A separate macOS job with no Apple credentials
-downloads and verifies the exact final DMG, opens its contained app, and
-requires the app to remain running on both Apple silicon and Intel. These launch
-checks happen without Apple credentials. The publishing job then verifies its
-digest again, creates its provenance attestation, and publishes only the DMG
-and its checksum with the tag and GitHub release.
+The workflow builds and tests all three candidates before it can access release
+credentials, including opening the universal app and requiring it to remain
+running. A protected job then imports the temporary signing identity, signs the
+exact tested candidates, and runs Apple's local notarization-readiness check.
+If that check returns only its exact internal XProtect error, the workflow
+retries three times before deferring to Apple's notary service; every other
+local finding remains blocking. The job creates and signs three read-only DMGs,
+submits each one to Apple, requires Accepted results and issue-free notarization
+logs, staples every ticket, checks Gatekeeper, and removes the credentials. The
+ZIPs used to pass tested apps between jobs are private and never published.
+Separate jobs with no Apple credentials open the universal build on both Mac
+architectures and the matching native build on each one. The publishing job
+verifies all digests again, creates provenance attestations, and publishes the
+universal DMG (recommended), Apple silicon DMG, Intel DMG, and their checksums.
 
-The DMG is the outer distribution that Apple notarizes and staples. Validation
+Each DMG is an outer distribution that Apple notarizes and staples. Validation
 also mounts it read-only and asks Gatekeeper to assess the contained app, but
 the app does not need a second physical ticket stapled inside the signed DMG.
 
@@ -174,3 +171,7 @@ APP_VERSION=0.3.0 APP_BUILD=3 ./scripts/package-app.sh
   --build 3 \
   --require-no-bundled-tools
 ```
+
+Set `APP_ARCHITECTURE=arm64` or `APP_ARCHITECTURE=x86_64` to create a native
+bundle in `.build/release-arm64` or `.build/release-x86_64`. Pass the matching
+`--architecture` value to the validation and disk-image scripts.

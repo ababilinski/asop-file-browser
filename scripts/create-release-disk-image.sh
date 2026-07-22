@@ -30,7 +30,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_VALIDATOR="$ROOT/scripts/validate-app-bundle.sh"
 DMG_VALIDATOR="$ROOT/scripts/validate-release-disk-image.sh"
 VOLUME_ICON="$ROOT/Resources/AppIcon.icns"
-DISK_IMAGE_NAME="ASOP-File-Browser-$VERSION-macOS.dmg"
+RELEASE_ARTIFACT_SUFFIX="${RELEASE_ARTIFACT_SUFFIX:-}"
+if [[ -n "$RELEASE_ARTIFACT_SUFFIX" && ! "$RELEASE_ARTIFACT_SUFFIX" =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "RELEASE_ARTIFACT_SUFFIX may contain only letters, numbers, and hyphens." >&2
+  exit 2
+fi
+SUFFIX="${RELEASE_ARTIFACT_SUFFIX:+-$RELEASE_ARTIFACT_SUFFIX}"
+DISK_IMAGE_NAME="ASOP-File-Browser-$VERSION-macOS$SUFFIX.dmg"
 CHECKSUM_NAME="$DISK_IMAGE_NAME.sha256"
 
 mkdir -p "$OUTPUT_DIRECTORY"

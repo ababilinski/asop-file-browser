@@ -350,8 +350,8 @@ private struct ToolSetupSheet: View {
             }
 
             HStack(spacing: 16) {
-                Link("Official release", destination: URL(string: "https://github.com/Genymobile/scrcpy/releases/tag/v4.0")!)
-                Link("Licenses", destination: URL(string: "https://github.com/Genymobile/scrcpy/blob/v4.0/LICENSE")!)
+                Link("Official release", destination: URL(string: "https://github.com/Genymobile/scrcpy/releases/tag/v4.1")!)
+                Link("Licenses", destination: URL(string: "https://github.com/Genymobile/scrcpy/blob/v4.1/LICENSE")!)
                 Link("ADB terms", destination: URL(string: "https://developer.android.com/studio/terms")!)
             }
             .font(.caption)
