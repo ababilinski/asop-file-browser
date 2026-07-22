@@ -28,7 +28,7 @@ These features work with either connection mode.
 - **Copy and paste.** Copy items to another folder on the same phone.
 - **Compress and uncompress.** Create an archive or open one without leaving the file browser.
 - **Handle duplicate names.** Skip the item, replace the existing copy, or keep both.
-- **Follow long transfers.** The transfer panel shows overall and per-item progress. Transfers can be cancelled, retried, or cleared after they finish.
+- **Follow long work.** The Progress panel shows overall and per-item progress for transfers and multi-APK install queues. Queued installs can be reordered or removed, and failed items keep their error details.
 - **Keep browsing during a transfer.** File moves update the browser right away while the work continues in the background. Larger moves show progress.
 
 ## File Transfer Mode
@@ -58,7 +58,7 @@ Developer Options adds features that need USB or Wi-Fi debugging.
 
 Phone Tools are available with Developer Options enabled.
 
-- **Manage apps.** Install an APK; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions.
+- **Manage apps.** Drag an APK, XAPK, APKS, or split ZIP from Finder to install it; drop several APKs to create an editable serial install queue; open, stop, enable, disable, or uninstall an app; clear its cache or storage; save its APK; and inspect its version, size, and permissions. Downgrades, signature conflicts, incomplete splits, and other install failures get guided recovery instead of raw command output.
 - **Take screenshots.** Capture one or more connected displays. Multiple displays
   are saved side by side in one image.
 - **Record the screen.** Record one or more connected displays. Multiple displays

@@ -85,6 +85,35 @@ final class AppModelDeviceSessionTests: XCTestCase {
         XCTAssertFalse(model.isLoadingApps)
     }
 
+    func testDisconnectIsAppliedWhileAppInstallIsStillRunning() async throws {
+        let runner = SlowAppLoadingProcessRunner()
+        let model = makeModel(runner: runner)
+        let device = AndroidDevice(serial: "first-device", state: .device, model: "First", product: nil, transport: nil)
+        model.devices = [device]
+        model.selectedDeviceID = device.id
+        model.sidebarSelection = .apps
+
+        let installTask = Task {
+            await model.installAppPackages(urls: [URL(fileURLWithPath: "/tmp/test.apk")])
+        }
+        try await waitUntil(timeout: .seconds(2)) {
+            await runner.didStartInstall() && model.isInstallingAppPackage
+        }
+        await runner.setConnectedDeviceSerials([])
+
+        await model.pollDeviceConnections()
+
+        XCTAssertTrue(model.devices.isEmpty)
+        XCTAssertNil(model.selectedDeviceID)
+        XCTAssertNil(model.selectedDevice)
+        XCTAssertNil(model.sidebarSelection)
+        XCTAssertTrue(model.shouldShowADBSetupAfterConnectionModeSwitch)
+        XCTAssertFalse(model.hasReadyADBDevice)
+
+        installTask.cancel()
+        await installTask.value
+    }
+
     private func makeModel(runner: SlowAppLoadingProcessRunner) -> AppModel {
         let suiteName = "AndroidFileBrowserCoreTests.AppModelDeviceSession.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -120,6 +149,7 @@ private actor SlowAppLoadingProcessRunner: ProcessRunning {
     private var connectedDeviceSerials = ["first-device", "second-device"]
     private var slowDetailsStarted = false
     private var slowDetailsCancellations = 0
+    private var installStarted = false
 
     func run(executable: URL, arguments: [String]) async throws -> ADBCommandResult {
         if arguments == ["version"] {
@@ -130,6 +160,11 @@ private actor SlowAppLoadingProcessRunner: ProcessRunning {
                 "\(serial) device product:test model:Test_Device transport_id:1"
             }
             return result((["List of devices attached"] + rows).joined(separator: "\n") + "\n")
+        }
+        if arguments.contains("install") || arguments.contains("install-multiple") {
+            installStarted = true
+            try await Task.sleep(for: .seconds(10))
+            return result("Success\n")
         }
 
         let serial = arguments.count > 1 && arguments[0] == "-s" ? arguments[1] : ""
@@ -187,6 +222,10 @@ private actor SlowAppLoadingProcessRunner: ProcessRunning {
 
     func didStartSlowDetails() -> Bool {
         slowDetailsStarted
+    }
+
+    func didStartInstall() -> Bool {
+        installStarted
     }
 
     func slowDetailsCancellationCount() -> Int {

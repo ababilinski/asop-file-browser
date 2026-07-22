@@ -7,6 +7,7 @@ public struct RootView: View {
     @ObservedObject private var model: AppModel
     @ObservedObject private var settings: AppSettings
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var isAppPackageDropTargeted = false
 
     public init(model: AppModel) {
         self.model = model
@@ -44,6 +45,22 @@ public struct RootView: View {
                 .padding(.trailing, 24)
         }
         .containerBackground(.regularMaterial, for: .window)
+        .overlay {
+            if isAppPackageDropTargeted {
+                AppPackageDropOverlay(deviceName: model.selectedDevice?.title)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        .localFileDropTarget(
+            isEnabled: !model.isAppPackageInstallInProgress,
+            acceptsDrop: AppPackageInstaller.isSupportedSelection
+        ) { targeted in
+            withAnimation(.snappy(duration: 0.18)) {
+                isAppPackageDropTargeted = targeted
+            }
+        } onDrop: { urls in
+            Task { await model.installDroppedAppPackages(urls: urls) }
+        }
         .fileImporter(
             isPresented: $model.showUploadImporter,
             allowedContentTypes: [.item],
@@ -59,11 +76,16 @@ public struct RootView: View {
         }
         .fileImporter(
             isPresented: $model.showAPKImporter,
-            allowedContentTypes: [UTType(filenameExtension: "apk") ?? .item],
-            allowsMultipleSelection: false
+            allowedContentTypes: [
+                UTType(filenameExtension: "apk") ?? .data,
+                UTType(filenameExtension: "xapk") ?? .data,
+                UTType(filenameExtension: "apks") ?? .data,
+                .zip
+            ],
+            allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                Task { await model.installAPK(url: url) }
+            if case .success(let urls) = result {
+                Task { await model.installAppPackages(urls: urls) }
             }
         }
         .alert(item: $model.alert) { alert in
@@ -90,6 +112,9 @@ public struct RootView: View {
         }
         .sheet(item: $model.pendingBatchRenameRequest) { request in
             BatchRenameSheet(model: model, request: request)
+        }
+        .sheet(item: $model.pendingAppInstallRecovery) { request in
+            AppInstallRecoverySheet(model: model, request: request)
         }
         .sheet(item: $model.adbQRPairingSession, onDismiss: {
             model.adbQRPairingSheetDidDismiss()
@@ -3064,7 +3089,9 @@ private struct AppToolbar: ToolbarContent {
                 .help("View Layout: switch between List and Icons.")
                 .accessibilityLabel("File Layout")
                 .accessibilityHint("Switch between list and icon file layouts.")
+            }
 
+            if model.showsPhoneCaptureToolbarControls {
                 Button {
                     model.requestScreenshot()
                 } label: {
@@ -3168,6 +3195,7 @@ private struct ConnectionModeMenu: View {
 private struct StatusStrip: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var usbTransferManager: USBTransferManager
+    @State private var showsDetails = false
 
     init(model: AppModel) {
         self.model = model
@@ -3184,10 +3212,73 @@ private struct StatusStrip: View {
                 .lineLimit(2)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .help(statusMessage)
             Spacer()
+            Button {
+                showsDetails.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Show status details: \(statusMessage)")
+            .accessibilityLabel("Show Status Details")
+            .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+                statusDetails
+            }
         }
         .padding(10)
         .background(.regularMaterial)
+    }
+
+    private var statusDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Current Status", systemImage: "info.circle.fill")
+                .font(.headline)
+
+            Text(statusMessage)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+                GridRow {
+                    Text("Connection")
+                        .foregroundStyle(.secondary)
+                    Text(model.connectionMode.label)
+                }
+                GridRow {
+                    Text("Device")
+                        .foregroundStyle(.secondary)
+                    Text(statusDeviceName)
+                }
+                if !model.isUSBTransferSelected, model.selectedDevice != nil {
+                    GridRow {
+                        Text("Location")
+                            .foregroundStyle(.secondary)
+                        Text(model.currentPath)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    GridRow {
+                        Text("Items")
+                            .foregroundStyle(.secondary)
+                        Text("\(model.files.count)")
+                    }
+                }
+            }
+            .font(.caption)
+        }
+        .padding(16)
+        .frame(width: 330, alignment: .leading)
+    }
+
+    private var statusDeviceName: String {
+        if model.isUSBTransferSelected {
+            return usbTransferManager.selectedDevice?.name ?? "No device selected"
+        }
+        return model.selectedDevice?.title ?? "No device selected"
     }
 
     private var isBusy: Bool {
