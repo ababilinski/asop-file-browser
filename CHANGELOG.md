@@ -6,6 +6,12 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-22
+
+### New features
+
+- Support macOS 13 and later ([#14](https://github.com/ababilinski/asop-file-browser/pull/14))
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
@@ -62,6 +68,7 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Guarded release automation with build, test, signing, notarization, and launch
   checks before publication.
 
-[Unreleased]: https://github.com/ababilinski/asop-file-browser/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/ababilinski/asop-file-browser/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/ababilinski/asop-file-browser/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/ababilinski/asop-file-browser/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/ababilinski/asop-file-browser/releases/tag/1.0.0
