@@ -3,7 +3,7 @@
 - `MTPKit-LICENSE.txt` accompanies MTPKit 0.1.4, which is compiled into ASOP File Browser.
 - `Apache-2.0.txt` is the license used by the open-source ADB code.
 - `Android-SDK-Platform-Tools-37.0.0-NOTICE.txt` is the complete matching notice from Google’s Platform-Tools 37.0.0 package.
-- `scrcpy-4.0-LICENSE.txt` is the exact license published for scrcpy 4.0.
+- `scrcpy-4.1-LICENSE.txt` is the exact license published for scrcpy 4.1.
 - `Android-SDK-Platform-Tools-37.0.0.md` records the exact ADB build accepted by the package script.
 - `managed-tools.json` is the canonical record of the managed scrcpy and ADB versions, official sources, archive names, checksums, notice files, and website copyright.
 
