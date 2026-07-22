@@ -6,8 +6,13 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-22
+
 ### Added
 
+- Install `.apk`, `.xapk`, `.apks`, and split `.zip` app packages by dragging
+  them into the app, with an editable multi-package install queue, progress,
+  actionable errors, and recovery choices for version and signing conflicts.
 - Open Phone Control for multiple connected devices at once, with a separate
   battery and shortcut bar for each device window.
 - Keep Phone Control from waking devices unless enabled, add per-device stream
@@ -17,9 +22,13 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Show only supported actions in each Phone Control bar, with direct screenshot
   and recording buttons, battery status, a clear recording indicator, and a
   device-actions menu that can wake the display.
+- Added separate Apple silicon and Intel downloads alongside the universal Mac app.
 
 ### Changed
 
+- Load the app list before slower metadata, then fill in app names and icons as
+  they become available.
+- Keep Phone Control, screenshots, and recording available from app and storage views.
 - Opening the app again brings its existing window forward instead of starting
   another copy.
 - Treat a slow device response as a temporary command failure instead of opening
@@ -29,17 +38,13 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Keep a display's single static frame visible for the rest of a combined
   recording instead of failing the side-by-side export.
 - Updated the optional managed Phone Tools download to scrcpy 4.1.
-- Added separate Apple silicon and Intel downloads alongside the universal Mac app.
 
-## [1.1.0] - 2026-07-22
+### Fixed
 
-### New features
-
-- Add multi-device control and capture ([#3](https://github.com/ababilinski/asop-file-browser/pull/3))
-
-### Fixes and improvements
-
-- Update scrcpy and add native Mac downloads ([#2](https://github.com/ababilinski/asop-file-browser/pull/2))
+- Return to connection instructions when the selected device disconnects, even
+  while app metadata or an app installation is still loading.
+- Keep install progress and completion state in sync so finished drag-and-drop
+  installs no longer leave stale progress UI behind.
 
 ## [1.0.0] - 2026-07-17
 
