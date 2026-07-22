@@ -6,20 +6,19 @@ Browse, preview, and move files between your Android phone and Mac.
 
 Requires macOS 15 or later.
 
-
 ## Screenshots
 
-<img width="817" height="490" alt="2026-07-22_16-00-58" src="https://github.com/user-attachments/assets/c1704ea3-9072-494f-af41-a565b4461f28" />
+<img width="817" height="490" alt="ASOP File Browser showing Android storage in a Finder-style browser" src="https://github.com/user-attachments/assets/c1704ea3-9072-494f-af41-a565b4461f28" />
 
-**View and edit your android storage just like in Finder**
+**View and edit your Android storage just like in Finder.**
 
-<img width="817" height="490" alt="App Storage View" src="https://github.com/user-attachments/assets/7acf4558-19f0-47c6-9711-efd51f987ca7" />
+<img width="817" height="490" alt="ASOP File Browser detailed Android storage view" src="https://github.com/user-attachments/assets/7acf4558-19f0-47c6-9711-efd51f987ca7" />
 
-**See what is taking up space using the detailed storage screen**
+**See what is taking up space using the detailed storage screen.**
 
-<img width="817" height="490" alt="App manager screen" src="https://github.com/user-attachments/assets/c9ca4109-259f-41ff-9dba-e73b81143d72" />
+<img width="817" height="490" alt="ASOP File Browser app manager" src="https://github.com/user-attachments/assets/c9ca4109-259f-41ff-9dba-e73b81143d72" />
 
-**Install and download apps using the app manager screen**
+**Install and download apps using the app manager.**
 
 ## Quick links
 
