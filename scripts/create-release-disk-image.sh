@@ -71,13 +71,38 @@ fi
 /usr/bin/ditto "$VOLUME_ICON" "$STAGING_DIRECTORY/.VolumeIcon.icns"
 
 /bin/rm -f "$DISK_IMAGE_PATH" "$CHECKSUM_PATH"
-/usr/bin/hdiutil create \
-  -ov \
-  -fs HFS+ \
-  -format UDRW \
-  -volname "ASOP File Browser" \
-  -srcfolder "$STAGING_DIRECTORY" \
-  "$WRITABLE_DISK_IMAGE"
+
+# hdiutil can briefly report "Resource busy" on otherwise idle hosted macOS
+# runners. Remove any partial image and retry only that transient failure;
+# other errors still fail immediately with their original output and status.
+create_writable_disk_image() {
+  local attempt output status
+  for attempt in 1 2 3; do
+    /bin/rm -f "$WRITABLE_DISK_IMAGE"
+    if output="$(/usr/bin/hdiutil create \
+      -ov \
+      -fs HFS+ \
+      -format UDRW \
+      -volname "ASOP File Browser" \
+      -srcfolder "$STAGING_DIRECTORY" \
+      "$WRITABLE_DISK_IMAGE" 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    else
+      status=$?
+    fi
+
+    printf '%s\n' "$output" >&2
+    if [[ "$output" != *"Resource busy"* || "$attempt" -eq 3 ]]; then
+      return "$status"
+    fi
+
+    echo "hdiutil was temporarily busy; retrying disk image creation ($attempt/3)." >&2
+    /bin/sleep "$((attempt * 2))"
+  done
+}
+
+create_writable_disk_image
 
 /usr/bin/hdiutil attach \
   -readwrite \
