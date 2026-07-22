@@ -489,7 +489,7 @@ private struct QuickLookSessionView: View {
                             .font(.headline)
                     }
                 } else if let errorMessage = controller.errorMessage {
-                    ContentUnavailableView(
+                    CompatibleContentUnavailableView(
                         "Preview Unavailable",
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)

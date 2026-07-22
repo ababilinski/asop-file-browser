@@ -23,7 +23,7 @@ struct AndroidFileBrowserApp: App {
                     appDelegate.configure(model: model)
                     applyAppearance(settings.appearanceMode)
                 }
-                .onChange(of: settings.appearanceMode) { _, mode in
+                .onValueChange(of: settings.appearanceMode) { _, mode in
                     applyAppearance(mode)
                 }
         }

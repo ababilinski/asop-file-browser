@@ -337,15 +337,20 @@ private struct FileColumnBrowser: View {
                                         density: density,
                                         level: 0
                                     )
+                                    .compatibleScrollTarget(id: file.id, in: "adb-file-column-scroll")
                                 }
                             }
-                            .scrollTargetLayout()
+                            .compatibleScrollTargetLayout()
                         }
                         .frame(width: layout.totalWidth, alignment: .leading)
                         .frame(minHeight: max(proxy.size.height - 33, 0), alignment: .top)
                     }
-                    .scrollPosition(id: $scrollPositionID, anchor: .top)
-                    .onChange(of: model.currentPath) { oldPath, newPath in
+                    .compatibleScrollPosition(
+                        id: $scrollPositionID,
+                        anchor: .top,
+                        coordinateSpace: "adb-file-column-scroll"
+                    )
+                    .onValueChange(of: model.currentPath) { oldPath, newPath in
                         if let scrollPositionID {
                             scrollPositionsByPath[oldPath] = scrollPositionID
                         }
@@ -868,16 +873,21 @@ private struct FileIconGrid: View {
                         LazyVGrid(columns: columns, spacing: 18) {
                             ForEach(model.visibleFiles) { file in
                                 FileIconGridItem(model: model, file: file)
+                                    .compatibleScrollTarget(id: file.id, in: "adb-file-icon-scroll")
                             }
                         }
-                        .scrollTargetLayout()
+                        .compatibleScrollTargetLayout()
                         .padding(18)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: proxy.size.height, alignment: .top)
                 }
-                .scrollPosition(id: $scrollPositionID, anchor: .top)
-                .onChange(of: model.currentPath) { oldPath, newPath in
+                .compatibleScrollPosition(
+                    id: $scrollPositionID,
+                    anchor: .top,
+                    coordinateSpace: "adb-file-icon-scroll"
+                )
+                .onValueChange(of: model.currentPath) { oldPath, newPath in
                     if let scrollPositionID {
                         scrollPositionsByPath[oldPath] = scrollPositionID
                     }
@@ -1050,7 +1060,7 @@ private struct FileIconGridItem: View {
         .onAppear {
             renameText = file.name
         }
-        .onChange(of: model.inlineRenameFileID == file.id) { _, isRenaming in
+        .onValueChange(of: model.inlineRenameFileID == file.id) { _, isRenaming in
             if isRenaming {
                 renameText = file.name
             }
@@ -1118,7 +1128,7 @@ struct FileNameCell: View {
         .onAppear {
             renameText = file.name
         }
-        .onChange(of: isRenaming) { _, isRenaming in
+        .onValueChange(of: isRenaming) { _, isRenaming in
             if isRenaming {
                 renameText = file.name
             }

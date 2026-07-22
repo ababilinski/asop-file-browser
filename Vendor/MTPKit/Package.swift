@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "MTPKit",
     defaultLocalization: "en",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v13)],
     products: [
         .library(name: "MTPKit", targets: ["MTPKit"]),
     ],

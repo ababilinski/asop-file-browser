@@ -15,7 +15,7 @@ A dependency-free Swift package for talking to Android devices from macOS — br
 
 ## Requirements
 
-- macOS 15+
+- macOS 13+
 - Swift 6+（Xcode 16+）
 
 ## Installation

@@ -44,7 +44,7 @@ public struct RootView: View {
                 .padding(.top, 8)
                 .padding(.trailing, 24)
         }
-        .containerBackground(.regularMaterial, for: .window)
+        .compatibleWindowMaterialBackground()
         .overlay {
             if isAppPackageDropTargeted {
                 AppPackageDropOverlay(deviceName: model.selectedDevice?.title)
@@ -1054,7 +1054,7 @@ private struct StorageBreakdownView: View {
                         Task { await model.showStorageBreakdown(for: summary, forceRefresh: true) }
                     }
                 } else {
-                    ContentUnavailableView("Storage Not Available", systemImage: "internaldrive", description: Text("Select a storage volume from the sidebar."))
+                    CompatibleContentUnavailableView("Storage Not Available", systemImage: "internaldrive", description: Text("Select a storage volume from the sidebar."))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1168,7 +1168,7 @@ private struct StorageAnalysisPlaceholder: View {
     let retry: () -> Void
 
     var body: some View {
-        ContentUnavailableView {
+        CompatibleContentUnavailableView {
             Label(isLoading ? "Analyzing \(title)" : "Storage Breakdown Not Loaded", systemImage: "internaldrive")
         } description: {
             Text(isLoading ? "Reading storage categories from the Android device." : "Click Refresh to analyze this storage volume.")
@@ -1363,7 +1363,7 @@ private struct StorageCategoryFilesPanel: View {
                 .frame(minHeight: CGFloat(min(sortedFiles.count, 8)) * 42 + 34)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             } else if fileList != nil {
-                ContentUnavailableView(
+                CompatibleContentUnavailableView(
                     "No Accessible Files",
                     systemImage: category.kind.symbol,
                     description: Text("Android did not expose individual files for this category.")
@@ -1666,7 +1666,7 @@ private struct StorageCategoryAppsPanel: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 230)
-                .onChange(of: model.appKind) { _, _ in
+                .onValueChange(of: model.appKind) { _, _ in
                     Task { await model.loadPackages() }
                 }
 

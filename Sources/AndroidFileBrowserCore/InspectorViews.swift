@@ -47,7 +47,7 @@ struct DetailInspector: View {
         } else if let package = model.selectedPackage {
             PackageDetailCard(model: model, package: package)
         } else {
-            ContentUnavailableView("No Selection", systemImage: "sidebar.right", description: Text("Select a file, preview, or app to see details."))
+            CompatibleContentUnavailableView("No Selection", systemImage: "sidebar.right", description: Text("Select a file, preview, or app to see details."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -468,7 +468,7 @@ private struct PackageStorageLocationsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if package.availableStorageKinds == nil {
-                ContentUnavailableView(
+                CompatibleContentUnavailableView(
                     "Storage Details Needed",
                     systemImage: "folder.badge.questionmark",
                     description: Text("Refresh app details to see which app folders exist and contain data.")
@@ -479,7 +479,7 @@ private struct PackageStorageLocationsView: View {
                     Label("Refresh Details", systemImage: "arrow.clockwise")
                 }
             } else if package.visibleAppStorageLocations.isEmpty {
-                ContentUnavailableView(
+                CompatibleContentUnavailableView(
                     "No App Storage Data",
                     systemImage: "folder",
                     description: Text("No app storage folders with visible data were found.")

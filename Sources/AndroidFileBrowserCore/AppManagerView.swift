@@ -15,7 +15,7 @@ struct AppManagerView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 230)
                 .help("App Type: switch between user-installed apps and system apps.")
-                .onChange(of: model.appKind) { _, _ in
+                .onValueChange(of: model.appKind) { _, _ in
                     Task { await model.loadPackages() }
                 }
 
@@ -85,10 +85,7 @@ struct AppPackageDropOverlay: View {
                 .padding(22)
 
             VStack(spacing: 14) {
-                Image(systemName: "arrow.down.app.fill")
-                    .font(.system(size: 46, weight: .medium))
-                    .foregroundStyle(.tint)
-                    .symbolEffect(.bounce, options: .repeat(2))
+                AppPackageDropSymbol()
 
                 Text(deviceName.map { "Install on \($0)" } ?? "Install App Package")
                     .font(.title2.weight(.semibold))
@@ -112,6 +109,31 @@ struct AppPackageDropOverlay: View {
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Release to install the Android app package")
+    }
+}
+
+private struct AppPackageDropSymbol: View {
+    @State private var fallbackScale = 0.92
+
+    @ViewBuilder
+    var body: some View {
+        if #available(macOS 15, *) {
+            icon.symbolEffect(.bounce, options: .repeat(2))
+        } else {
+            icon
+                .scaleEffect(fallbackScale)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.18).repeatCount(2, autoreverses: true)) {
+                        fallbackScale = 1.08
+                    }
+                }
+        }
+    }
+
+    private var icon: some View {
+        Image(systemName: "arrow.down.app.fill")
+            .font(.system(size: 46, weight: .medium))
+            .foregroundStyle(.tint)
     }
 }
 

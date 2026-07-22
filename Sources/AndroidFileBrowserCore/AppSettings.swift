@@ -501,7 +501,7 @@ public struct SettingsView: View {
         }
         .frame(minWidth: 760, idealWidth: 860, minHeight: 520, idealHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: settings.phoneCapturePresentation) { _, _ in
+        .onValueChange(of: settings.phoneCapturePresentation) { _, _ in
             model.phoneCapturePresentationDidChange()
         }
     }
@@ -558,7 +558,7 @@ public struct SettingsView: View {
                 symbol: "folder.badge.gearshape",
                 isOn: $settings.calculateFolderSizes
             )
-            .onChange(of: settings.calculateFolderSizes) { _, isEnabled in
+            .onValueChange(of: settings.calculateFolderSizes) { _, isEnabled in
                 model.folderSizeCalculationSettingDidChange(isEnabled: isEnabled)
             }
         }
@@ -732,10 +732,10 @@ public struct SettingsView: View {
         .task {
             await model.refreshCacheUsage()
         }
-        .onChange(of: settings.encryptPreviewCache) { _, _ in
+        .onValueChange(of: settings.encryptPreviewCache) { _, _ in
             Task { await model.updatePreviewCacheProtection() }
         }
-        .onChange(of: settings.previewCacheRetention) { _, _ in
+        .onValueChange(of: settings.previewCacheRetention) { _, _ in
             Task { await model.performPreviewCacheMaintenance(force: true) }
         }
     }

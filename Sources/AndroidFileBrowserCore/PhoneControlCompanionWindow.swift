@@ -542,20 +542,34 @@ private struct PhoneControlCompanionBar: View {
         .padding(4)
         .preferredColorScheme(model.settings.appearanceMode.colorScheme)
         .onAppear { updateRecordingPulse() }
-        .onChange(of: isRecording) { _, _ in updateRecordingPulse() }
-        .onChange(of: accessibilityReduceMotion) { _, _ in updateRecordingPulse() }
+        .onValueChange(of: isRecording) { _, _ in updateRecordingPulse() }
+        .onValueChange(of: accessibilityReduceMotion) { _, _ in updateRecordingPulse() }
     }
 
+    @ViewBuilder
     private var dragHandle: some View {
+        if #available(macOS 15, *) {
+            dragHandleShape
+                .gesture(WindowDragGesture())
+                .allowsWindowActivationEvents(true)
+                .help("Drag to move the controls")
+                .accessibilityLabel("Drag to move the controls")
+        } else {
+            dragHandleShape
+                .overlay {
+                    LegacyWindowDragArea()
+                }
+                .help("Drag to move the controls")
+                .accessibilityLabel("Drag to move the controls")
+        }
+    }
+
+    private var dragHandleShape: some View {
         Capsule(style: .continuous)
             .fill(Color.secondary.opacity(0.55))
             .frame(width: 4, height: 28)
             .frame(width: 12, height: 40)
             .contentShape(Rectangle())
-            .gesture(WindowDragGesture())
-            .allowsWindowActivationEvents(true)
-            .help("Drag to move the controls")
-            .accessibilityLabel("Drag to move the controls")
     }
 
     private var deviceSummary: some View {

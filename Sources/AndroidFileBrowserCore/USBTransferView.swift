@@ -600,7 +600,7 @@ private struct USBTransferColumnBrowser: View {
                         Divider()
 
                         if manager.visibleItems.isEmpty {
-                            ContentUnavailableView(
+                            CompatibleContentUnavailableView(
                                 manager.searchText.isEmpty ? "No Items" : "No Results",
                                 systemImage: manager.searchText.isEmpty ? "folder" : "magnifyingglass",
                                 description: Text(emptyDescription)
@@ -636,15 +636,20 @@ private struct USBTransferColumnBrowser: View {
                                                 layout: layout,
                                                 level: 0
                                             )
+                                            .compatibleScrollTarget(id: item.id, in: "usb-file-column-scroll")
                                         }
                                     }
-                                    .scrollTargetLayout()
+                                    .compatibleScrollTargetLayout()
                                 }
                                 .frame(width: layout.totalWidth, alignment: .leading)
                                 .frame(minHeight: max(proxy.size.height - 33, 0), alignment: .top)
                             }
-                            .scrollPosition(id: $scrollPositionID, anchor: .top)
-                            .onChange(of: currentFolderPath) { oldPath, newPath in
+                            .compatibleScrollPosition(
+                                id: $scrollPositionID,
+                                anchor: .top,
+                                coordinateSpace: "usb-file-column-scroll"
+                            )
+                            .onValueChange(of: currentFolderPath) { oldPath, newPath in
                                 if let scrollPositionID {
                                     scrollPositionsByPath[oldPath] = scrollPositionID
                                 }
@@ -735,7 +740,7 @@ private struct USBTransferIconGrid: View {
             GeometryReader { proxy in
                 ZStack {
                     if manager.visibleItems.isEmpty {
-                        ContentUnavailableView(
+                        CompatibleContentUnavailableView(
                             manager.searchText.isEmpty ? "No Items" : "No Results",
                             systemImage: manager.searchText.isEmpty ? "folder" : "magnifyingglass",
                             description: Text(manager.searchText.isEmpty ? "This folder is empty." : "Try a different search.")
@@ -768,16 +773,21 @@ private struct USBTransferIconGrid: View {
                                             settings: settings,
                                             item: item
                                         )
+                                        .compatibleScrollTarget(id: item.id, in: "usb-file-icon-scroll")
                                     }
                                 }
-                                .scrollTargetLayout()
+                                .compatibleScrollTargetLayout()
                                 .padding(18)
                             }
                             .frame(maxWidth: .infinity)
                             .frame(minHeight: proxy.size.height, alignment: .top)
                         }
-                        .scrollPosition(id: $scrollPositionID, anchor: .top)
-                        .onChange(of: currentFolderPath) { oldPath, newPath in
+                        .compatibleScrollPosition(
+                            id: $scrollPositionID,
+                            anchor: .top,
+                            coordinateSpace: "usb-file-icon-scroll"
+                        )
+                        .onValueChange(of: currentFolderPath) { oldPath, newPath in
                             if let scrollPositionID {
                                 scrollPositionsByPath[oldPath] = scrollPositionID
                             }
@@ -917,7 +927,7 @@ private struct USBTransferIconGridItem: View {
         .onAppear {
             renameText = item.name
         }
-        .onChange(of: manager.inlineRenameItemID == item.id) { _, isRenaming in
+        .onValueChange(of: manager.inlineRenameItemID == item.id) { _, isRenaming in
             if isRenaming {
                 renameText = item.name
             }
@@ -1385,7 +1395,7 @@ private struct USBTransferNameCell: View {
         .onAppear {
             renameText = item.name
         }
-        .onChange(of: isRenaming) { _, isRenaming in
+        .onValueChange(of: isRenaming) { _, isRenaming in
             if isRenaming {
                 renameText = item.name
             }
