@@ -65,6 +65,8 @@ final class CaptureCompositionServiceTests: XCTestCase {
     }
 
     func testCombiningRecordingsExportsOneSideBySideVideo() async throws {
+        try requireLocalVideoExportSupport()
+
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "CaptureCompositionVideoTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -100,6 +102,8 @@ final class CaptureCompositionServiceTests: XCTestCase {
     }
 
     func testCombiningRecordingsHoldsSingleFrameSourceForTimeline() async throws {
+        try requireLocalVideoExportSupport()
+
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "CaptureCompositionStaticVideoTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -140,6 +144,8 @@ final class CaptureCompositionServiceTests: XCTestCase {
     }
 
     func testCombiningRecordingsSkipsStartupWarmupBeforeTenthFrame() async throws {
+        try requireLocalVideoExportSupport()
+
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "CaptureCompositionWarmupTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -204,6 +210,13 @@ final class CaptureCompositionServiceTests: XCTestCase {
         guard CGImageDestinationFinalize(destination) else {
             throw CocoaError(.fileWriteUnknown)
         }
+    }
+
+    private func requireLocalVideoExportSupport() throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+            "AVFoundation video export requires a physical Mac graphics stack and crashes on headless GitHub runners."
+        )
     }
 
     private func writeSolidVideo(size: CGSize, color: CGColor, to url: URL) async throws {
