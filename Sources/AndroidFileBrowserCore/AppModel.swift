@@ -524,6 +524,12 @@ public final class AppModel: ObservableObject {
         hasReadyADBDevice || !usbTransferManager.devices.isEmpty
     }
 
+    var showsPhoneCaptureToolbarControls: Bool {
+        connectionMode == .adb
+            && hasReadyADBDevice
+            && !usbTransferManager.isADBReleasedForMTPSession
+    }
+
     public var shouldShowDetailInspector: Bool {
         showInspector && hasInspectableDeviceSurface
     }
@@ -1481,9 +1487,7 @@ public final class AppModel: ObservableObject {
 
     public func pollDeviceConnections() async {
         guard !isPreparingForTermination,
-              !isPollingDeviceConnections,
-              !operationActivity.hasTerminationBlockingActivity,
-              !isRunningFileHistoryOperation else { return }
+              !isPollingDeviceConnections else { return }
         if isUSBTransferSelected, usbTransferManager.isADBReleasedForMTPSession {
             statusMessage = usbTransferManager.statusMessage
             return
@@ -7331,6 +7335,10 @@ public final class AppModel: ObservableObject {
 
         if selectedDevice?.state != .device {
             clearADBOnlyState()
+            if hadReadyADBDevice, connectionMode == .adb {
+                shouldShowADBSetupAfterConnectionModeSwitch = true
+                sidebarSelection = nil
+            }
         }
 
         return !hadReadyADBDevice && hasReadyADBDevice
