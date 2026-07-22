@@ -33,6 +33,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Validation scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.scope.outputs.app }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether app validation is needed
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            RANGE="$PR_BASE_SHA...$PR_HEAD_SHA"
+          elif [[ "$EVENT_NAME" == "merge_group" && -n "$MERGE_BASE_SHA" ]]; then
+            RANGE="$MERGE_BASE_SHA...$GITHUB_SHA"
+          elif [[ "$EVENT_NAME" == "push" && "$PUSH_BEFORE_SHA" =~ [^0] ]] &&
+               git cat-file -e "$PUSH_BEFORE_SHA^{commit}" 2>/dev/null; then
+            RANGE="$PUSH_BEFORE_SHA..$GITHUB_SHA"
+          else
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          APP_CHANGED=false
+          while IFS= read -r path; do
+            case "$path" in
+              docs/*|*.md|LICENSE|scripts/README.md|.github/ISSUE_TEMPLATE/*|.github/PULL_REQUEST_TEMPLATE.md)
+                ;;
+              *)
+                APP_CHANGED=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "$RANGE")
+          echo "app=$APP_CHANGED" >> "$GITHUB_OUTPUT"
+
   workflow-lint:
     name: Workflow lint
     runs-on: ubuntu-latest
@@ -90,16 +136,11 @@ jobs:
           python3 scripts/release_metadata.py validate-labels --labels-json "$LABELS_JSON"
 
   tests:
-    name: Tests (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Apple silicon
-            runner: macos-15
-          - name: Intel
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
+    name: Tests
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.app == 'true' }}
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -127,7 +168,9 @@ jobs:
   artifact:
     name: Release artifact
     needs:
+      - changes
       - tests
+    if: ${{ needs.changes.outputs.app == 'true' && needs.tests.result == 'success' }}
     runs-on: macos-15
     timeout-minutes: 35
     env:
@@ -193,7 +236,9 @@ jobs:
   artifact-launch:
     name: App launch (${{ matrix.name }})
     needs:
+      - changes
       - artifact
+    if: ${{ needs.changes.outputs.app == 'true' && needs.artifact.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -234,6 +279,7 @@ jobs:
     name: Release readiness
     if: ${{ always() }}
     needs:
+      - changes
       - workflow-lint
       - release-label
       - tests
@@ -245,6 +291,8 @@ jobs:
         env:
           DISPATCH_PR_NUMBER: ${{ inputs.pull_request_number }}
           EVENT_NAME: ${{ github.event_name }}
+          APP_VALIDATION: ${{ needs.changes.outputs.app }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
           LABEL_RESULT: ${{ needs.release-label.result }}
           LINT_RESULT: ${{ needs.workflow-lint.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
@@ -260,10 +308,17 @@ jobs:
             echo "Release label: $LABEL_RESULT"
             exit 1
           fi
-          if [[ "$LINT_RESULT" != "success" ||
-                "$TESTS_RESULT" != "success" ||
-                "$ARTIFACT_RESULT" != "success" ||
-                "$APP_LAUNCH_RESULT" != "success" ]]; then
+          if [[ "$APP_VALIDATION" == "true" ]]; then
+            EXPECTED_APP_RESULT="success"
+          else
+            EXPECTED_APP_RESULT="skipped"
+          fi
+          if [[ "$CHANGES_RESULT" != "success" ||
+                "$LINT_RESULT" != "success" ||
+                "$TESTS_RESULT" != "$EXPECTED_APP_RESULT" ||
+                "$ARTIFACT_RESULT" != "$EXPECTED_APP_RESULT" ||
+                "$APP_LAUNCH_RESULT" != "$EXPECTED_APP_RESULT" ]]; then
+            echo "Validation scope: $CHANGES_RESULT (app=$APP_VALIDATION)"
             echo "Workflow lint: $LINT_RESULT"
             echo "Tests: $TESTS_RESULT"
             echo "Release artifact: $ARTIFACT_RESULT"
