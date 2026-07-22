@@ -4,6 +4,32 @@ import XCTest
 
 @MainActor
 final class AppModelDeviceSessionTests: XCTestCase {
+    func testAppRowsShowFallbackBeforePresentationMetadataArrives() async throws {
+        let runner = SlowAppLoadingProcessRunner()
+        let model = makeModel(runner: runner)
+        let device = AndroidDevice(serial: "first-device", state: .device, model: "First", product: nil, transport: nil)
+        model.devices = [device]
+        model.selectedDeviceID = device.id
+
+        let loadTask = Task { await model.loadPackages() }
+        try await waitUntil(timeout: .seconds(2)) {
+            model.packages.count == 1 && model.packages[0].appLabel == nil
+        }
+
+        XCTAssertEqual(model.packages[0].displayName, "Reader")
+        XCTAssertEqual(model.packages[0].displayInitials, "RE")
+        XCTAssertNil(model.packages[0].iconPNGData)
+
+        try await waitUntil(timeout: .seconds(2)) {
+            model.packages.first?.appLabel == "Reader Plus"
+                && model.packages.first?.iconPNGData != nil
+        }
+        XCTAssertEqual(model.packages[0].displayName, "Reader Plus")
+
+        loadTask.cancel()
+        await loadTask.value
+    }
+
     func testAppListAppearsBeforeDetailsAndDeviceSwitchCancelsOldLoad() async throws {
         let runner = SlowAppLoadingProcessRunner()
         let model = makeModel(runner: runner)
@@ -116,6 +142,11 @@ private actor SlowAppLoadingProcessRunner: ProcessRunning {
         }
         if command.contains("ps -A") {
             return result("com.example.reader\n")
+        }
+        if command.contains(" app_process ") {
+            try await Task.sleep(for: .milliseconds(250))
+            let icon = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            return result("com.example.reader\tReader Plus\t\(icon)\n")
         }
         if serial == "first-device", command.hasPrefix("stat -c %s ") {
             slowDetailsStarted = true

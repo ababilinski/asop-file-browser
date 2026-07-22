@@ -6782,7 +6782,15 @@ public final class AppModel: ObservableObject {
             let presentations = try await appManager.presentations(
                 device: device,
                 packages: visiblePackages
-            )
+            ) { [weak self] batch in
+                guard let self else { throw CancellationError() }
+                try await self.applyPackagePresentationBatch(
+                    batch,
+                    device: device,
+                    kind: requestedKind,
+                    revision: loadRevision
+                )
+            }
             try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
             visiblePackages = visiblePackages.map { package in
                 guard let presentation = presentations[package.packageName] else { return package }
@@ -6812,6 +6820,22 @@ public final class AppModel: ObservableObject {
             try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
             guard let index = packages.firstIndex(where: { $0.id == enrichedPackage.id }) else { continue }
             packages[index] = enrichedPackage
+        }
+    }
+
+    private func applyPackagePresentationBatch(
+        _ presentations: [String: AndroidAppPresentation],
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try validatePackageLoad(device: device, kind: kind, revision: revision)
+        packages = packages.map { package in
+            guard let presentation = presentations[package.packageName] else { return package }
+            var updated = package
+            updated.appLabel = presentation.label
+            updated.iconPNGData = presentation.iconPNGData
+            return updated
         }
     }
 

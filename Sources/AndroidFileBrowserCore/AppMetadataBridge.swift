@@ -47,7 +47,8 @@ actor AppMetadataBridge {
 
     func presentations(
         device: AndroidDevice,
-        packages: [AndroidPackage]
+        packages: [AndroidPackage],
+        onBatch: (@Sendable ([String: AndroidAppPresentation]) async throws -> Void)? = nil
     ) async throws -> [String: AndroidAppPresentation] {
         let eligiblePackages = packages.filter { $0.apkPath != nil }
         var result: [String: AndroidAppPresentation] = [:]
@@ -60,6 +61,9 @@ actor AppMetadataBridge {
             } else {
                 missing.append(package)
             }
+        }
+        if let onBatch, !result.isEmpty {
+            try await onBatch(result)
         }
         guard !missing.isEmpty else { return result }
 
@@ -95,10 +99,15 @@ actor AppMetadataBridge {
                     timeout: 30
                 )
 
+                var batchPresentations: [String: AndroidAppPresentation] = [:]
                 for (packageName, presentation) in AppMetadataBridgeParser.parse(commandResult.stdout) {
                     guard let package = batch.first(where: { $0.packageName == packageName }) else { continue }
                     presentationsByCacheKey[cacheKey(deviceSerial: device.serial, package: package)] = presentation
                     result[packageName] = presentation
+                    batchPresentations[packageName] = presentation
+                }
+                if let onBatch, !batchPresentations.isEmpty {
+                    try await onBatch(batchPresentations)
                 }
             }
             await removeRemotePayload(deviceSerial: device.serial)

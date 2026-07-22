@@ -865,9 +865,14 @@ public actor AppManagerService {
 
     func presentations(
         device: AndroidDevice,
-        packages: [AndroidPackage]
+        packages: [AndroidPackage],
+        onBatch: (@Sendable ([String: AndroidAppPresentation]) async throws -> Void)? = nil
     ) async throws -> [String: AndroidAppPresentation] {
-        try await metadataBridge.presentations(device: device, packages: packages)
+        try await metadataBridge.presentations(
+            device: device,
+            packages: packages,
+            onBatch: onBatch
+        )
     }
 
     public func details(device: AndroidDevice, package: AndroidPackage) async throws -> AndroidPackage {

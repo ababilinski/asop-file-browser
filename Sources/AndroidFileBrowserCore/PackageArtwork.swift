@@ -1,20 +1,53 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
-@MainActor
-private enum PackageArtworkImageCache {
-    static let images = NSCache<NSString, NSImage>()
+private final class PackageArtworkImageBox: @unchecked Sendable {
+    let image: CGImage
+
+    init(_ image: CGImage) {
+        self.image = image
+    }
+}
+
+private actor PackageArtworkImageLoader {
+    static let shared = PackageArtworkImageLoader()
+
+    private let images = NSCache<NSString, PackageArtworkImageBox>()
+
+    func image(for data: Data, key: String) -> CGImage? {
+        let cacheKey = key as NSString
+        if let cached = images.object(forKey: cacheKey) {
+            return cached.image
+        }
+
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceShouldCache: true,
+                    kCGImageSourceShouldCacheImmediately: true
+                ] as CFDictionary
+              ) else {
+            return nil
+        }
+        images.setObject(PackageArtworkImageBox(image), forKey: cacheKey)
+        return image
+    }
 }
 
 struct PackageArtwork: View {
     let package: AndroidPackage
     let size: CGFloat
     let usesFinderColors: Bool
+    @State private var iconImage: CGImage?
+    @State private var loadedIconID: String?
 
     var body: some View {
         Group {
-            if let image = iconImage {
-                Image(nsImage: image)
+            if loadedIconID == iconLoadID, let iconImage {
+                Image(decorative: iconImage, scale: 1)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
@@ -41,18 +74,27 @@ struct PackageArtwork: View {
                 .strokeBorder(.white.opacity(usesFinderColors ? 0.16 : 0.10), lineWidth: 0.5)
         }
         .accessibilityLabel("\(package.displayName) app icon")
+        .task(id: iconLoadID) {
+            loadedIconID = nil
+            iconImage = nil
+            guard let data = package.iconPNGData else { return }
+            let requestedIconID = iconLoadID
+            let decodedImage = await PackageArtworkImageLoader.shared.image(
+                for: data,
+                key: requestedIconID
+            )
+            guard !Task.isCancelled else { return }
+            iconImage = decodedImage
+            loadedIconID = decodedImage == nil ? nil : requestedIconID
+        }
     }
 
-    private var iconImage: NSImage? {
-        guard let data = package.iconPNGData else { return nil }
-        let prefix = data.prefix(12).base64EncodedString()
-        let key = "\(package.packageName)|\(data.count)|\(prefix)" as NSString
-        if let cached = PackageArtworkImageCache.images.object(forKey: key) {
-            return cached
+    private var iconLoadID: String {
+        guard let data = package.iconPNGData else {
+            return "\(package.packageName)|fallback"
         }
-        guard let image = NSImage(data: data) else { return nil }
-        PackageArtworkImageCache.images.setObject(image, forKey: key)
-        return image
+        let prefix = data.prefix(12).base64EncodedString()
+        return "\(package.packageName)|\(package.apkPath ?? "")|\(data.count)|\(prefix)"
     }
 
     private var paletteColors: [Color] {
