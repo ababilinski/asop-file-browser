@@ -22,7 +22,8 @@ the normal publishing flow are documented in [`RELEASING.md`](../RELEASING.md).
   --require-no-bundled-tools
 ```
 
-`package-app.sh` reads `VERSION` by default. Its main overrides are
+`package-app.sh` reads `VERSION` by default and builds for the supported
+macOS 13 deployment target. Its main overrides are
 `APP_VERSION`, `APP_BUILD`, `MIN_MACOS_VERSION`, `CODE_SIGN_IDENTITY`, and the
 optional `ADB_PLATFORM_TOOLS_DIR`.
 

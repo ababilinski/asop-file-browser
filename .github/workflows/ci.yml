@@ -266,6 +266,10 @@ jobs:
             runner: macos-15
             architecture: arm64
             suffix: Apple-Silicon
+          - name: macOS 14 compatibility
+            runner: macos-14
+            architecture: arm64
+            suffix: Apple-Silicon
           - name: Intel
             runner: macos-15-intel
             architecture: x86_64

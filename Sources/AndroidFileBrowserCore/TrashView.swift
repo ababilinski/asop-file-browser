@@ -13,7 +13,7 @@ struct TrashView: View {
             Divider()
 
             if model.trashRecords.isEmpty {
-                ContentUnavailableView(
+                CompatibleContentUnavailableView(
                     "Trash Is Empty",
                     systemImage: "trash",
                     description: Text("Deleted items appear here until you restore or permanently delete them.")
@@ -40,7 +40,7 @@ struct TrashView: View {
                 Task { await model.renameTrash(record: record, to: name) }
             }
         }
-        .onChange(of: model.trashRecords.map(\.id)) { _, recordIDs in
+        .onValueChange(of: model.trashRecords.map(\.id)) { _, recordIDs in
             selectedRecordIDs.formIntersection(recordIDs)
         }
     }

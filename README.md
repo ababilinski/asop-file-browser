@@ -4,7 +4,7 @@
 
 Browse, preview, and move files between your Android phone and Mac.
 
-Requires macOS 15 or later.
+Requires macOS 13 Ventura or later.
 
 ## Screenshots
 

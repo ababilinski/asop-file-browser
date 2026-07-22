@@ -126,8 +126,8 @@ plist_value() {
   || fail "Unexpected bundle name."
 [[ "$(plist_value CFBundlePackageType)" == "APPL" ]] \
   || fail "Unexpected bundle package type."
-[[ "$(plist_value LSMinimumSystemVersion)" == "15.0" ]] \
-  || fail "The app must keep macOS 15.0 as its minimum system version."
+[[ "$(plist_value LSMinimumSystemVersion)" == "13.0" ]] \
+  || fail "The app must keep macOS 13.0 as its minimum system version."
 [[ "$(plist_value LSMultipleInstancesProhibited)" == "true" ]] \
   || fail "The app must prohibit multiple running instances."
 
@@ -166,8 +166,8 @@ MINIMUM_OS_VALUES="$(/usr/bin/xcrun vtool -show-build "$EXECUTABLE" | /usr/bin/a
 [[ "$(printf '%s\n' "$MINIMUM_OS_VALUES" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')" -eq "${#REQUIRED_ARCHITECTURES[@]}" ]] \
   || fail "Expected one minimum-OS record for each architecture."
 while IFS= read -r minimum_os; do
-  [[ -z "$minimum_os" || "$minimum_os" == "15.0" ]] \
-    || fail "Executable slice has minimum macOS $minimum_os instead of 15.0."
+  [[ -z "$minimum_os" || "$minimum_os" == "13.0" ]] \
+    || fail "Executable slice has minimum macOS $minimum_os instead of 13.0."
 done <<< "$MINIMUM_OS_VALUES"
 
 require_file "$RESOURCES/AppIcon.icns"

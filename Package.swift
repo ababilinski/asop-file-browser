@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "AndroidFileBrowser",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v13)
     ],
     products: [
         .executable(name: "AndroidFileBrowser", targets: ["AndroidFileBrowser"])

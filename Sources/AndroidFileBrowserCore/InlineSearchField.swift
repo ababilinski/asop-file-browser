@@ -33,10 +33,10 @@ struct InlineSearchField: View {
                     selectNameSearch: selectNameSearch,
                     selectKind: selectKind
                 )
-                .presentationBackground(Color(nsColor: .windowBackgroundColor))
+                .compatiblePresentationBackground(Color(nsColor: .windowBackgroundColor))
             }
             .frame(width: 300)
-            .onChange(of: isFocused) { _, focused in
+            .onValueChange(of: isFocused) { _, focused in
                 if focused {
                     updateSuggestionPresentation()
                 }
@@ -56,7 +56,7 @@ struct InlineSearchField: View {
                 .textFieldStyle(.plain)
                 .lineLimit(1)
                 .focused($isFocused)
-                .onChange(of: text) { _, _ in
+                .onValueChange(of: text) { _, _ in
                     suppressSuggestions = false
                     updateSuggestionPresentation()
                 }
