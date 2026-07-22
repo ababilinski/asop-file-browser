@@ -46,6 +46,18 @@ final class AppPackageInstallerTests: XCTestCase {
         let conflict = try XCTUnwrap(issue as? AppInstallConflict)
         XCTAssertEqual(conflict.kind, .differentSignature)
         XCTAssertEqual(conflict.packageName, "com.example.reader")
+        XCTAssertTrue(conflict.localizedDescription.contains("signed differently"))
+    }
+
+    func testDowngradeConflictExplainsWhyInstallCannotContinue() {
+        let conflict = AppInstallConflict(
+            kind: .newerVersionInstalled,
+            packageName: "com.example.reader",
+            details: "INSTALL_FAILED_VERSION_DOWNGRADE"
+        )
+
+        XCTAssertTrue(conflict.localizedDescription.contains("newer version installed"))
+        XCTAssertTrue(conflict.localizedDescription.contains("remove the installed copy"))
     }
 
     func testCommonInstallFailuresBecomeActionableIssues() {

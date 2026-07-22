@@ -112,7 +112,7 @@ struct AndroidFileBrowserApp: App {
             }
 
             CommandGroup(after: .sidebar) {
-                Toggle("Transfer Panel", isOn: Binding(
+                Toggle("Progress Panel", isOn: Binding(
                     get: { model.transferQueue.isPanelExpanded },
                     set: { model.transferQueue.isPanelExpanded = $0 }
                 ))

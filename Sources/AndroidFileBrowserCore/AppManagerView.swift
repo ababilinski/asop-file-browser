@@ -47,7 +47,7 @@ struct AppManagerView: View {
                 } label: {
                     Label("Install Package…", systemImage: "plus.app")
                 }
-                .disabled(model.appInstallActivity != nil)
+                .disabled(model.isAppPackageInstallInProgress)
                 .help("Install Package: choose an APK, XAPK, APKS, or split ZIP on this Mac.")
                 .accessibilityLabel("Install App Package")
                 .accessibilityHint("Choose an Android app package on this Mac and install it on the Android device.")
@@ -112,45 +112,6 @@ struct AppPackageDropOverlay: View {
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Release to install the Android app package")
-    }
-}
-
-struct AppInstallProgressNotification: View {
-    let activity: AppInstallActivity
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "arrow.down.app.fill")
-                .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: 30, height: 30)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(activity.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(activity.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                ProgressView()
-                    .progressViewStyle(.linear)
-                    .tint(.accentColor)
-                    .accessibilityLabel("Installation progress")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(width: 420)
-        .liquidGlassPanel(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.16), radius: 20, y: 8)
-        .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(activity.title). \(activity.detail)")
     }
 }
 

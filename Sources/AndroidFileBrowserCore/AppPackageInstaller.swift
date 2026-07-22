@@ -45,7 +45,7 @@ public enum AppInstallConflictKind: Sendable, Equatable {
     case differentSignature
 }
 
-public struct AppInstallConflict: Error, Sendable, Equatable {
+public struct AppInstallConflict: LocalizedError, Sendable, Equatable {
     public let kind: AppInstallConflictKind
     public let packageName: String?
     public let details: String
@@ -54,6 +54,16 @@ public struct AppInstallConflict: Error, Sendable, Equatable {
         self.kind = kind
         self.packageName = packageName
         self.details = details
+    }
+
+    public var errorDescription: String? {
+        let appName = packageName.map { "\($0) " } ?? "This app "
+        switch kind {
+        case .newerVersionInstalled:
+            return "\(appName)has a newer version installed. Use a newer APK, or remove the installed copy before trying this older version."
+        case .differentSignature:
+            return "\(appName)is signed differently from the installed copy. Remove the installed copy first only if losing its app data is acceptable."
+        }
     }
 }
 
@@ -83,18 +93,6 @@ public struct AppInstallRecoveryRequest: Identifiable, Sendable, Equatable {
             return urls[0].lastPathComponent
         }
         return "\(urls.count) split APKs"
-    }
-}
-
-public struct AppInstallActivity: Identifiable, Sendable, Equatable {
-    public let id: UUID
-    public let title: String
-    public let detail: String
-
-    public init(id: UUID = UUID(), title: String, detail: String) {
-        self.id = id
-        self.title = title
-        self.detail = detail
     }
 }
 
@@ -413,7 +411,7 @@ public actor AppPackageInstaller {
         arguments.append(contentsOf: apkURLs.map(\.path))
 
         do {
-            _ = try await adb.run(arguments)
+            _ = try await adb.run(arguments, timeout: 120)
         } catch FileOperationError.commandFailed(let message) {
             throw AppInstallFailureParser.issue(from: message)
         }

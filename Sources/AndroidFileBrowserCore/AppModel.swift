@@ -200,7 +200,7 @@ public final class AppModel: ObservableObject {
     @Published public var showUploadImporter = false
     @Published public var uploadTargetPath: String?
     @Published public var showAPKImporter = false
-    @Published public private(set) var appInstallActivity: AppInstallActivity?
+    @Published public private(set) var isInstallingAppPackage = false
     @Published public var pendingAppInstallRecovery: AppInstallRecoveryRequest?
     @Published public var previewURL: URL?
     @Published public var thumbnailURLs: [AndroidFile.ID: URL] = [:]
@@ -450,6 +450,10 @@ public final class AppModel: ObservableObject {
 
     public var hasReadyADBDevice: Bool {
         selectedDevice?.state == .device
+    }
+
+    public var isAppPackageInstallInProgress: Bool {
+        isInstallingAppPackage || transferQueue.unfinishedJobs.contains { $0.kind == .appInstall }
     }
 
     public var trashItemsAddedThisSessionCount: Int {
@@ -5380,13 +5384,78 @@ public final class AppModel: ObservableObject {
         await installAppPackages(urls: [url])
     }
 
+    public func installDroppedAppPackages(urls: [URL]) async {
+        var seenPaths = Set<String>()
+        let uniqueURLs = urls.filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
+        if uniqueURLs.count > 1,
+           uniqueURLs.allSatisfy({ AppPackageFormat.format(for: $0) == .apk }) {
+            enqueueDroppedAPKInstalls(uniqueURLs)
+        } else {
+            await installAppPackages(urls: uniqueURLs)
+        }
+    }
+
+    private func enqueueDroppedAPKInstalls(_ urls: [URL]) {
+        guard !isPreparingForTermination else { return }
+        guard let device = selectedDevice, device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the packages again."
+            )
+            return
+        }
+
+        pendingAppInstallRecovery = nil
+        let groupID = transferQueue.enqueueGroup(
+            kind: .appInstall,
+            title: "Install \(urls.count) apps",
+            subtitle: "Installing on \(device.title)",
+            source: TransferEndpoint(kind: .mac, path: urls.first?.deletingLastPathComponent().path ?? "", displayName: "Finder"),
+            destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+            itemKind: .file
+        )
+        let exclusiveGroup = "app-install:\(device.id)"
+
+        for url in urls {
+            transferQueue.enqueue(
+                kind: .appInstall,
+                title: url.lastPathComponent,
+                subtitle: "Waiting to install on \(device.title)",
+                source: TransferEndpoint(kind: .mac, path: url.path, displayName: url.lastPathComponent),
+                destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+                parentID: groupID,
+                totalBytes: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init),
+                exclusiveGroup: exclusiveGroup
+            ) { [weak self, appManager] controller in
+                guard let self else { throw CancellationError() }
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Installing")
+                let result = try await appManager.install(device: device, packageURLs: [url])
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Refreshing app list")
+                await self.refreshPackageListAfterInstall(on: device)
+                let expansionDetail = result.copiedExpansionFileCount > 0
+                    ? " and \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                    : ""
+                self.statusMessage = "Installed \(url.lastPathComponent) on \(device.title)\(expansionDetail)."
+                return TransferJobResult(message: "Installed")
+            }
+        }
+
+        transferQueue.isPanelExpanded = true
+        statusMessage = "Queued \(urls.count) apps for installation on \(device.title)."
+    }
+
     public func installAppPackages(
         urls: [URL],
         options: AppInstallOptions = AppInstallOptions(),
         replacingPackageName: String? = nil,
         targetDeviceID: AndroidDevice.ID? = nil
     ) async {
-        guard !isPreparingForTermination, appInstallActivity == nil else { return }
+        guard !isPreparingForTermination, !isAppPackageInstallInProgress else { return }
         let targetDevice = targetDeviceID.flatMap { id in devices.first { $0.id == id } }
         guard let device = targetDeviceID == nil ? selectedDevice : targetDevice,
               device.state == .device else {
@@ -5401,16 +5470,14 @@ public final class AppModel: ObservableObject {
         }
 
         let displayName = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) split APKs"
-        let activity = AppInstallActivity(
-            title: replacingPackageName == nil ? "Installing \(displayName)" : "Replacing existing app",
-            detail: "Installing on \(device.title)…"
-        )
-        appInstallActivity = activity
+        isInstallingAppPackage = true
         pendingAppInstallRecovery = nil
         beginTrackedOperation(blocksTermination: true)
-        statusMessage = activity.detail
+        statusMessage = replacingPackageName == nil
+            ? "Installing \(displayName) on \(device.title)…"
+            : "Replacing existing app on \(device.title)…"
         defer {
-            appInstallActivity = nil
+            isInstallingAppPackage = false
             endTrackedOperation(blocksTermination: true)
         }
 
@@ -5424,9 +5491,7 @@ public final class AppModel: ObservableObject {
                 packageURLs: urls,
                 options: options
             )
-            if selectedDevice?.id == device.id {
-                try await loadPackagesThrowing()
-            }
+            await refreshPackageListAfterInstall(on: device)
             let expansionDetail = result.copiedExpansionFileCount > 0
                 ? " and copied \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
                 : ""
@@ -5461,6 +5526,25 @@ public final class AppModel: ObservableObject {
         } catch {
             handleOperationError(error)
         }
+    }
+
+    private func refreshPackageListAfterInstall(on device: AndroidDevice) async {
+        guard selectedDevice?.id == device.id, device.state == .device else { return }
+        let requestedKind = appKind
+        guard let loadedPackages = try? await appManager.packages(device: device, kind: requestedKind),
+              selectedDevice?.id == device.id,
+              appKind == requestedKind else { return }
+
+        let existingByID = Dictionary(uniqueKeysWithValues: packages.map { ($0.id, $0) })
+        let mergedPackages = loadedPackages.map { package -> AndroidPackage in
+            guard let existing = existingByID[package.id] else { return package }
+            var merged = package
+            merged.isRunning = existing.isRunning
+            merged.appLabel = existing.appLabel
+            merged.iconPNGData = existing.iconPNGData
+            return merged
+        }
+        applyLoadedPackages(mergedPackages)
     }
 
     public func retryPendingAppInstallAllowingDowngrade() async {

@@ -51,24 +51,15 @@ public struct RootView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .overlay(alignment: .top) {
-            if let activity = model.appInstallActivity {
-                AppInstallProgressNotification(activity: activity)
-                    .padding(.top, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(10)
-            }
-        }
-        .animation(.snappy(duration: 0.22), value: model.appInstallActivity)
         .localFileDropTarget(
-            isEnabled: model.appInstallActivity == nil,
+            isEnabled: !model.isAppPackageInstallInProgress,
             acceptsDrop: AppPackageInstaller.isSupportedSelection
         ) { targeted in
             withAnimation(.snappy(duration: 0.18)) {
                 isAppPackageDropTargeted = targeted
             }
         } onDrop: { urls in
-            Task { await model.installAppPackages(urls: urls) }
+            Task { await model.installDroppedAppPackages(urls: urls) }
         }
         .fileImporter(
             isPresented: $model.showUploadImporter,
@@ -3202,6 +3193,7 @@ private struct ConnectionModeMenu: View {
 private struct StatusStrip: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var usbTransferManager: USBTransferManager
+    @State private var showsDetails = false
 
     init(model: AppModel) {
         self.model = model
@@ -3218,10 +3210,73 @@ private struct StatusStrip: View {
                 .lineLimit(2)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .help(statusMessage)
             Spacer()
+            Button {
+                showsDetails.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Show status details: \(statusMessage)")
+            .accessibilityLabel("Show Status Details")
+            .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+                statusDetails
+            }
         }
         .padding(10)
         .background(.regularMaterial)
+    }
+
+    private var statusDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Current Status", systemImage: "info.circle.fill")
+                .font(.headline)
+
+            Text(statusMessage)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+                GridRow {
+                    Text("Connection")
+                        .foregroundStyle(.secondary)
+                    Text(model.connectionMode.label)
+                }
+                GridRow {
+                    Text("Device")
+                        .foregroundStyle(.secondary)
+                    Text(statusDeviceName)
+                }
+                if !model.isUSBTransferSelected, model.selectedDevice != nil {
+                    GridRow {
+                        Text("Location")
+                            .foregroundStyle(.secondary)
+                        Text(model.currentPath)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    GridRow {
+                        Text("Items")
+                            .foregroundStyle(.secondary)
+                        Text("\(model.files.count)")
+                    }
+                }
+            }
+            .font(.caption)
+        }
+        .padding(16)
+        .frame(width: 330, alignment: .leading)
+    }
+
+    private var statusDeviceName: String {
+        if model.isUSBTransferSelected {
+            return usbTransferManager.selectedDevice?.name ?? "No device selected"
+        }
+        return model.selectedDevice?.title ?? "No device selected"
     }
 
     private var isBusy: Bool {
