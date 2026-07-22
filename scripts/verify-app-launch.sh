@@ -133,4 +133,14 @@ for ((attempt = 0; attempt < STABILITY_SECONDS * 4; attempt += 1)); do
   /bin/sleep 0.25
 done
 
-echo "Opened $APP_PATH as process $APP_PID; it remained running for $STABILITY_SECONDS seconds."
+if ! REOPEN_OUTPUT="$(/usr/bin/open "$APP_PATH" 2>&1)"; then
+  [[ -z "$REOPEN_OUTPUT" ]] || echo "$REOPEN_OUTPUT" >&2
+  fail "Launch Services could not reopen $APP_PATH."
+fi
+/bin/sleep 1
+
+REOPENED_PIDS="$(find_app_pid)"
+[[ "$REOPENED_PIDS" == "$APP_PID" ]] \
+  || fail "Reopening the app must activate process $APP_PID without starting another process; found: ${REOPENED_PIDS:-none}."
+
+echo "Opened $APP_PATH as process $APP_PID; it remained running for $STABILITY_SECONDS seconds and a second open reused the same process."

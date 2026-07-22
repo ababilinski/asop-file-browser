@@ -49,6 +49,68 @@ final class PhoneCapturePresentationTests: XCTestCase {
         XCTAssertEqual(model.activePhoneCapturePopoverMode, .phoneControl)
     }
 
+    func testCaptureDeviceSelectorAlwaysAppearsWhenOptionalSettingsAreHidden() {
+        let model = makeModel()
+        model.settings.showScreenshotSetup = false
+        model.settings.showRecordingSetup = false
+
+        model.requestScreenshot()
+        XCTAssertEqual(model.activePhoneCapturePopoverMode, .screenshot)
+
+        model.requestScreenRecording()
+        XCTAssertEqual(model.activePhoneCapturePopoverMode, .recording)
+    }
+
+    func testScreenshotAndRecordingKeepIndependentNonemptyDisplaySelections() {
+        let model = makeModel()
+        let first = AndroidDevice(
+            serial: "first",
+            state: .device,
+            model: "First Device",
+            product: nil,
+            transport: nil
+        )
+        let second = AndroidDevice(
+            serial: "second",
+            state: .device,
+            model: "Second Device",
+            product: nil,
+            transport: nil
+        )
+        model.devices = [first, second]
+        model.selectedDeviceID = first.id
+
+        XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .screenshot), [first.serial])
+        XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .recording), [first.serial])
+
+        model.setCaptureDevice(second.serial, selected: true, for: .screenshot)
+        XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .screenshot), [first.serial, second.serial])
+        XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .recording), [first.serial])
+
+        model.setCaptureDevice(first.serial, selected: false, for: .screenshot)
+        model.setCaptureDevice(second.serial, selected: false, for: .screenshot)
+        XCTAssertEqual(model.selectedCaptureDeviceSerials(for: .screenshot), [second.serial])
+    }
+
+    func testCaptureToolbarControlsStayAvailableInAppsAndStorage() {
+        let model = makeModel()
+        let device = AndroidDevice(
+            serial: "connected",
+            state: .device,
+            model: "Connected Device",
+            product: nil,
+            transport: nil
+        )
+        model.devices = [device]
+        model.selectedDeviceID = device.id
+
+        model.sidebarSelection = .apps
+        XCTAssertTrue(model.showsPhoneCaptureToolbarControls)
+
+        model.sidebarSelection = .storage("internal")
+        XCTAssertTrue(model.showsPhoneCaptureToolbarControls)
+    }
+
     private func makeModel() -> AppModel {
         let suiteName = "AndroidFileBrowserCoreTests.PhoneCapturePresentation.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

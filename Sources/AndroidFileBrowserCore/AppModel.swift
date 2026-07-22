@@ -28,6 +28,18 @@ private struct LocalUploadRequest: Sendable {
     }
 }
 
+private struct PreparedCaptureDevice {
+    let device: AndroidDevice
+    let restorePlan: ScreenRecordingRestorePlan
+    let shouldRestoreAfterCapture: Bool
+}
+
+private struct ScreenRecordingLaunchOutcome: @unchecked Sendable {
+    let device: AndroidDevice
+    let handle: ADBScreenRecordingProcess?
+    let errorMessage: String?
+}
+
 private struct FileHistoryFolder {
     let parent: String
     let name: String
@@ -131,7 +143,7 @@ public final class AppModel: ObservableObject {
     @Published public var selectedDeviceID: AndroidDevice.ID? {
         didSet {
             guard oldValue != selectedDeviceID else { return }
-            resetADBSessionStateForDeviceChange()
+            invalidateADBDeviceSession()
         }
     }
     @Published public var sidebarSelection: SidebarDestination? {
@@ -169,13 +181,17 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var isCapturingScreenshot = false
     @Published public private(set) var isLaunchingScrcpy = false
     @Published public private(set) var isStartingScreenRecording = false
+    @Published public private(set) var screenRecordingRequestDeviceSerial: String?
     @Published public private(set) var isFinishingScreenRecording = false
     @Published public private(set) var isApplyingCapturePresentation = false
     @Published public var screenshotOptions = ScreenRecordingOptions()
     @Published public var screenRecordingOptions = ScreenRecordingOptions()
     @Published public var phoneControlOptions = ScreenRecordingOptions()
+    @Published public var screenshotCaptureDeviceSerials: Set<String> = []
+    @Published public var recordingCaptureDeviceSerials: Set<String> = []
     @Published public private(set) var screenRecordingSession: ScreenRecordingSession?
-    @Published public private(set) var phoneControlSession: PhoneControlSession?
+    @Published public private(set) var phoneControlSessions: [PhoneControlSession] = []
+    @Published public private(set) var phoneControlCapabilityStates: [String: PhoneControlCapabilityState] = [:]
     @Published public private(set) var captureAppChoices: [AndroidPackage] = []
     @Published public private(set) var isLoadingCaptureApps = false
     @Published var activePhoneCapturePopoverMode: PhoneCaptureMode?
@@ -184,6 +200,8 @@ public final class AppModel: ObservableObject {
     @Published public var showUploadImporter = false
     @Published public var uploadTargetPath: String?
     @Published public var showAPKImporter = false
+    @Published public private(set) var isInstallingAppPackage = false
+    @Published public var pendingAppInstallRecovery: AppInstallRecoveryRequest?
     @Published public var previewURL: URL?
     @Published public var thumbnailURLs: [AndroidFile.ID: URL] = [:]
     @Published public private(set) var cacheUsage = AppCacheUsage.zero
@@ -257,6 +275,7 @@ public final class AppModel: ObservableObject {
     private let fileRepository: AndroidFileRepository
     private let appManager: AppManagerService
     private let captureService: DeviceCaptureService
+    private let captureCompositionService: CaptureCompositionService
     private let thumbnailService: ThumbnailService
     private let thumbnailRequestScheduler = ADBThumbnailRequestScheduler(maximumConcurrentRequests: 1)
     private let cacheStore: AppCacheStore
@@ -270,6 +289,7 @@ public final class AppModel: ObservableObject {
     private var lastSelectedFileID: AndroidFile.ID?
     private var keyboardSelectionAnchorFileID: AndroidFile.ID?
     private var lastSelectedPackageID: AndroidPackage.ID?
+    private var packageLoadRevision = 0
     private var searchTask: Task<Void, Never>?
     private var pendingInlineRenameWorkItem: DispatchWorkItem?
     private var inlineRenameBlockedBySelectionFileID: AndroidFile.ID?
@@ -280,12 +300,12 @@ public final class AppModel: ObservableObject {
     private var usbTransferManagerCancellable: AnyCancellable?
     private var delayedTransferPresentationTasks: [UUID: Task<Void, Never>] = [:]
     private var presentedDelayedTransferJobIDs = Set<UUID>()
-    private var screenRecordingHandle: ADBScreenRecordingProcess?
-    private var screenRecordingRestorePlan: ScreenRecordingRestorePlan?
+    private var screenRecordingHandles: [String: ADBScreenRecordingProcess] = [:]
+    private var screenRecordingRestorePlans: [String: ScreenRecordingRestorePlan] = [:]
     private var screenRecordingMonitorTask: Task<Void, Never>?
-    private var phoneControlRestorePlan: ScreenRecordingRestorePlan?
-    private var phoneControlMonitorTask: Task<Void, Never>?
-    private var phoneControlStopWasRequested = false
+    private var phoneControlRestorePlans: [String: ScreenRecordingRestorePlan] = [:]
+    private var phoneControlMonitorTasks: [String: Task<Void, Never>] = [:]
+    private var phoneControlStopRequests = Set<String>()
     private var capturePresentationUpdateTask: Task<Void, Never>?
     private var capturePresentationRevision = 0
     private var captureAppChoicesDeviceSerial: String?
@@ -293,6 +313,9 @@ public final class AppModel: ObservableObject {
     private var fileRedoStack: [FileHistoryOperation] = []
     private var operationActivity = OperationActivityTracker()
     private var cancellableReadTasks: [UUID: Task<Void, Never>] = [:]
+    private var deviceScopedReadTaskIDs = Set<UUID>()
+    private var adbDeviceSessionRevision = 0
+    private var isPollingDeviceConnections = false
     private var adbNavigationTask: Task<Void, Never>?
     private var browserReconciliationTask: Task<Void, Never>?
     private var browserReconciliationRequestID: UUID?
@@ -362,6 +385,7 @@ public final class AppModel: ObservableObject {
         self.fileRepository = AndroidFileRepository(adb: adb, scanner: scanner)
         self.appManager = AppManagerService(adb: adb)
         self.captureService = DeviceCaptureService(adb: adb)
+        self.captureCompositionService = CaptureCompositionService()
         self.thumbnailService = ThumbnailService()
         self.sidebarSelection = .location(Self.defaultQuickLocations[0])
         self.trashRecords = existingTrashRecords
@@ -385,7 +409,11 @@ public final class AppModel: ObservableObject {
             case FileOperationError.missingTool(let name):
                 self.presentToolSetup(tool: ToolchainTool(rawValue: name.lowercased()) ?? .adb, force: true)
             case FileOperationError.toolUnavailable(let tool, let reason):
-                self.presentToolSetup(tool: tool, issue: reason, force: true)
+                if self.isTransientToolTimeout(tool: tool, reason: reason) {
+                    self.presentTransientToolTimeout(reason)
+                } else {
+                    self.presentToolSetup(tool: tool, issue: reason, force: true)
+                }
             default:
                 break
             }
@@ -399,11 +427,33 @@ public final class AppModel: ObservableObject {
     }
 
     public var selectedDevice: AndroidDevice? {
-        devices.first { $0.id == selectedDeviceID } ?? devices.first
+        guard let selectedDeviceID else { return nil }
+        return devices.first { $0.id == selectedDeviceID }
+    }
+
+    public var phoneControlSession: PhoneControlSession? {
+        guard let serial = selectedDevice?.serial else { return phoneControlSessions.first }
+        return phoneControlSession(for: serial)
+    }
+
+    public func phoneControlSession(for deviceSerial: String) -> PhoneControlSession? {
+        phoneControlSessions.first { $0.deviceSerial == deviceSerial }
+    }
+
+    public func phoneControlCapabilityState(for deviceSerial: String) -> PhoneControlCapabilityState? {
+        phoneControlCapabilityStates[deviceSerial]
+    }
+
+    public func isScreenRecording(deviceSerial: String) -> Bool {
+        screenRecordingSession?.deviceSerials.contains(deviceSerial) == true
     }
 
     public var hasReadyADBDevice: Bool {
         selectedDevice?.state == .device
+    }
+
+    public var isAppPackageInstallInProgress: Bool {
+        isInstallingAppPackage || transferQueue.unfinishedJobs.contains { $0.kind == .appInstall }
     }
 
     public var trashItemsAddedThisSessionCount: Int {
@@ -472,6 +522,12 @@ public final class AppModel: ObservableObject {
 
     public var hasInspectableDeviceSurface: Bool {
         hasReadyADBDevice || !usbTransferManager.devices.isEmpty
+    }
+
+    var showsPhoneCaptureToolbarControls: Bool {
+        connectionMode == .adb
+            && hasReadyADBDevice
+            && !usbTransferManager.isADBReleasedForMTPSession
     }
 
     public var shouldShowDetailInspector: Bool {
@@ -1325,7 +1381,9 @@ public final class AppModel: ObservableObject {
     }
 
     public var canSwitchADBDevice: Bool {
-        !isBusy && !isSwitchingADBDevice && !isRunningFileHistoryOperation
+        !isSwitchingADBDevice
+            && !operationActivity.hasTerminationBlockingActivity
+            && !isRunningFileHistoryOperation
     }
 
     public func refreshLaunchConnections() async {
@@ -1344,28 +1402,37 @@ public final class AppModel: ObservableObject {
         }
         isSwitchingADBDevice = true
         selectedDeviceID = id
+        isSwitchingADBDevice = false
         guard selectedDevice?.state == .device else {
-            isSwitchingADBDevice = false
-            statusMessage = "Select a connected phone."
+            statusMessage = "Select a connected device."
             return
         }
+        loadSelectedADBDeviceInBackground()
+    }
+
+    private func loadSelectedADBDeviceInBackground() {
+        guard let deviceID = selectedDeviceID,
+              selectedDevice?.state == .device else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isSwitchingADBDevice = false }
-            await self.performCancellableRead("Loading phone...") {
+            await self.performCancellableRead("Loading device...") {
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 try await self.refreshStorage()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 await self.refreshBatteryStatus()
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 if self.connectionMode == .adb {
                     try await self.refreshCurrentSurface()
                 }
+                guard self.selectedDeviceID == deviceID else { throw CancellationError() }
                 self.statusMessage = "Ready."
             }
         }
     }
 
     public func refreshDevices(requestUSBTransferIfADBUnavailable: Bool = false) async {
-        await performCancellableRead("Refreshing devices...") { [self] in
+        await performCancellableRead("Refreshing devices...", deviceScoped: false) { [self] in
             let found: [AndroidDevice]
             do {
                 found = try await deviceManager.devices()
@@ -1419,29 +1486,43 @@ public final class AppModel: ObservableObject {
     }
 
     public func pollDeviceConnections() async {
-        guard !isPreparingForTermination, !isBusy else { return }
+        guard !isPreparingForTermination,
+              !isPollingDeviceConnections else { return }
         if isUSBTransferSelected, usbTransferManager.isADBReleasedForMTPSession {
             statusMessage = usbTransferManager.statusMessage
             return
         }
 
+        isPollingDeviceConnections = true
+        defer { isPollingDeviceConnections = false }
+        let wasBusy = isBusy
+
         do {
             let found = try await deviceManager.devices()
             adbRuntimeIssue = nil
             suppressedToolSetup.remove(.adb)
+            let previousSelectedDeviceID = selectedDeviceID
             let adbBecameReady = applyADBDeviceSnapshot(found)
-            if adbBecameReady, connectionMode == .adb {
-                prepareADBReadySurfaceForTransition()
-                try await refreshStorage()
-                try await refreshCurrentSurface()
-            }
-            if selectedDevice?.state == .device {
+            let selectedDeviceChanged = previousSelectedDeviceID != selectedDeviceID
+            if (adbBecameReady || selectedDeviceChanged),
+               connectionMode == .adb,
+               selectedDevice?.state == .device {
+                if adbBecameReady {
+                    prepareADBReadySurfaceForTransition()
+                }
+                loadSelectedADBDeviceInBackground()
+            } else if !wasBusy, selectedDevice?.state == .device {
                 await refreshBatteryStatus()
             }
+            if !wasBusy {
+                await refreshPhoneControlBatteryStatuses()
+            }
 
-            statusMessage = adbBecameReady
-                ? "ADB connected. Full device browsing is available."
-                : connectionStatusMessage(adbDevices: found)
+            if !wasBusy || selectedDeviceChanged || found.isEmpty {
+                statusMessage = adbBecameReady
+                    ? "ADB connected. Full device browsing is available."
+                    : connectionStatusMessage(adbDevices: found)
+            }
         } catch FileOperationError.missingTool {
             clearADBOnlyState(clearDevices: true)
             adbRuntimeIssue = "Phone tools are not installed."
@@ -5304,12 +5385,191 @@ public final class AppModel: ObservableObject {
     }
 
     public func installAPK(url: URL) async {
-        await perform("Installing \(url.lastPathComponent)...") {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
-            try await appManager.install(device: device, apkURL: url)
-            try await loadPackagesThrowing()
-            statusMessage = "Installed \(url.lastPathComponent)."
+        await installAppPackages(urls: [url])
+    }
+
+    public func installDroppedAppPackages(urls: [URL]) async {
+        var seenPaths = Set<String>()
+        let uniqueURLs = urls.filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
+        if uniqueURLs.count > 1,
+           uniqueURLs.allSatisfy({ AppPackageFormat.format(for: $0) == .apk }) {
+            enqueueDroppedAPKInstalls(uniqueURLs)
+        } else {
+            await installAppPackages(urls: uniqueURLs)
         }
+    }
+
+    private func enqueueDroppedAPKInstalls(_ urls: [URL]) {
+        guard !isPreparingForTermination else { return }
+        guard let device = selectedDevice, device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the packages again."
+            )
+            return
+        }
+
+        pendingAppInstallRecovery = nil
+        let groupID = transferQueue.enqueueGroup(
+            kind: .appInstall,
+            title: "Install \(urls.count) apps",
+            subtitle: "Installing on \(device.title)",
+            source: TransferEndpoint(kind: .mac, path: urls.first?.deletingLastPathComponent().path ?? "", displayName: "Finder"),
+            destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+            itemKind: .file
+        )
+        let exclusiveGroup = "app-install:\(device.id)"
+
+        for url in urls {
+            transferQueue.enqueue(
+                kind: .appInstall,
+                title: url.lastPathComponent,
+                subtitle: "Waiting to install on \(device.title)",
+                source: TransferEndpoint(kind: .mac, path: url.path, displayName: url.lastPathComponent),
+                destination: TransferEndpoint(kind: .adb, deviceID: device.id, path: "apps", displayName: device.title),
+                parentID: groupID,
+                totalBytes: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init),
+                exclusiveGroup: exclusiveGroup
+            ) { [weak self, appManager] controller in
+                guard let self else { throw CancellationError() }
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Installing")
+                let result = try await appManager.install(device: device, packageURLs: [url])
+                try controller.checkCancellation()
+                controller.updateProgress(message: "Refreshing app list")
+                await self.refreshPackageListAfterInstall(on: device)
+                let expansionDetail = result.copiedExpansionFileCount > 0
+                    ? " and \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                    : ""
+                self.statusMessage = "Installed \(url.lastPathComponent) on \(device.title)\(expansionDetail)."
+                return TransferJobResult(message: "Installed")
+            }
+        }
+
+        transferQueue.isPanelExpanded = true
+        statusMessage = "Queued \(urls.count) apps for installation on \(device.title)."
+    }
+
+    public func installAppPackages(
+        urls: [URL],
+        options: AppInstallOptions = AppInstallOptions(),
+        replacingPackageName: String? = nil,
+        targetDeviceID: AndroidDevice.ID? = nil
+    ) async {
+        guard !isPreparingForTermination, !isAppPackageInstallInProgress else { return }
+        let targetDevice = targetDeviceID.flatMap { id in devices.first { $0.id == id } }
+        guard let device = targetDeviceID == nil ? selectedDevice : targetDevice,
+              device.state == .device else {
+            connectionMode = .adb
+            sidebarSelection = nil
+            statusMessage = "Developer Options is required to install apps."
+            alert = UserAlert(
+                title: "Connect with Developer Options",
+                message: "Installing app packages requires ADB. Connect with USB debugging or pair over Wireless debugging, then drop the package again."
+            )
+            return
+        }
+
+        let displayName = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) split APKs"
+        isInstallingAppPackage = true
+        pendingAppInstallRecovery = nil
+        beginTrackedOperation(blocksTermination: true)
+        statusMessage = replacingPackageName == nil
+            ? "Installing \(displayName) on \(device.title)…"
+            : "Replacing existing app on \(device.title)…"
+        defer {
+            isInstallingAppPackage = false
+            endTrackedOperation(blocksTermination: true)
+        }
+
+        do {
+            if let replacingPackageName {
+                statusMessage = "Removing the existing copy of \(replacingPackageName)…"
+                try await appManager.uninstall(device: device, packageName: replacingPackageName)
+            }
+            let result = try await appManager.install(
+                device: device,
+                packageURLs: urls,
+                options: options
+            )
+            await refreshPackageListAfterInstall(on: device)
+            let expansionDetail = result.copiedExpansionFileCount > 0
+                ? " and copied \(result.copiedExpansionFileCount) expansion file\(result.copiedExpansionFileCount == 1 ? "" : "s")"
+                : ""
+            statusMessage = "Installed \(displayName) on \(device.title)\(expansionDetail)."
+        } catch let conflict as AppInstallConflict {
+            if conflict.kind == .newerVersionInstalled, options.allowDowngrade {
+                alert = UserAlert(
+                    title: "Downgrade Not Allowed",
+                    message: "Android still refused this older version. Many release apps and newer Android versions cannot be downgraded without removing the installed copy first. To protect app data, ASOP File Browser did not remove it."
+                )
+                statusMessage = "Android did not allow the downgrade."
+            } else if conflict.kind == .differentSignature, conflict.packageName == nil {
+                alert = UserAlert(
+                    title: "App Signed Differently",
+                    message: "Android won’t replace the installed app because the new package has a different signature. Uninstall the existing app first if you accept losing its app data, then try again."
+                )
+                statusMessage = "App signature does not match the installed copy."
+            } else {
+                pendingAppInstallRecovery = AppInstallRecoveryRequest(
+                    urls: urls,
+                    conflict: conflict,
+                    deviceID: device.id,
+                    deviceName: device.title
+                )
+                statusMessage = conflict.kind == .newerVersionInstalled
+                    ? "A newer version is already installed."
+                    : "App signature does not match the installed copy."
+            }
+        } catch let installError as AppPackageInstallError {
+            alert = UserAlert(title: installError.title, message: installError.localizedDescription)
+            statusMessage = installError.title
+        } catch {
+            handleOperationError(error)
+        }
+    }
+
+    private func refreshPackageListAfterInstall(on device: AndroidDevice) async {
+        guard selectedDevice?.id == device.id, device.state == .device else { return }
+        let requestedKind = appKind
+        guard let loadedPackages = try? await appManager.packages(device: device, kind: requestedKind),
+              selectedDevice?.id == device.id,
+              appKind == requestedKind else { return }
+
+        let existingByID = Dictionary(uniqueKeysWithValues: packages.map { ($0.id, $0) })
+        let mergedPackages = loadedPackages.map { package -> AndroidPackage in
+            guard let existing = existingByID[package.id] else { return package }
+            var merged = package
+            merged.isRunning = existing.isRunning
+            merged.appLabel = existing.appLabel
+            merged.iconPNGData = existing.iconPNGData
+            return merged
+        }
+        applyLoadedPackages(mergedPackages)
+    }
+
+    public func retryPendingAppInstallAllowingDowngrade() async {
+        guard let request = pendingAppInstallRecovery else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            options: AppInstallOptions(allowDowngrade: true),
+            targetDeviceID: request.deviceID
+        )
+    }
+
+    public func replacePendingAppInstall() async {
+        guard let request = pendingAppInstallRecovery,
+              let packageName = request.conflict.packageName else { return }
+        pendingAppInstallRecovery = nil
+        await installAppPackages(
+            urls: request.urls,
+            replacingPackageName: packageName,
+            targetDeviceID: request.deviceID
+        )
     }
 
     public func uninstall(package: AndroidPackage) async {
@@ -5444,22 +5704,63 @@ public final class AppModel: ObservableObject {
     private func shouldShowPhoneCaptureSetup(for mode: PhoneCaptureMode) -> Bool {
         switch mode {
         case .screenshot:
-            return settings.showScreenshotSetup || isCapturingScreenshot
+            return true
         case .recording:
-            return settings.showRecordingSetup
-                || screenRecordingSession != nil
-                || isStartingScreenRecording
-                || isFinishingScreenRecording
+            return true
         case .phoneControl:
             return settings.showPhoneControlSetup || isLaunchingScrcpy
         }
+    }
+
+    func selectedCaptureDeviceSerials(for mode: PhoneCaptureMode) -> Set<String> {
+        let readyDevices = devices.filter { $0.state == .device }
+        let readySerials = Set(readyDevices.map(\.serial))
+        let storedSerials: Set<String>
+        switch mode {
+        case .screenshot:
+            storedSerials = screenshotCaptureDeviceSerials
+        case .recording:
+            storedSerials = recordingCaptureDeviceSerials
+        case .phoneControl:
+            return selectedDevice.map { [$0.serial] } ?? []
+        }
+
+        let validSerials = storedSerials.intersection(readySerials)
+        if !validSerials.isEmpty { return validSerials }
+        if let selectedDevice, selectedDevice.state == .device {
+            return [selectedDevice.serial]
+        }
+        return readyDevices.first.map { [$0.serial] } ?? []
+    }
+
+    func setCaptureDevice(_ serial: String, selected: Bool, for mode: PhoneCaptureMode) {
+        guard mode != .phoneControl else { return }
+        var serials = selectedCaptureDeviceSerials(for: mode)
+        if selected {
+            serials.insert(serial)
+        } else if serials.count > 1 {
+            serials.remove(serial)
+        }
+        switch mode {
+        case .screenshot:
+            screenshotCaptureDeviceSerials = serials
+        case .recording:
+            recordingCaptureDeviceSerials = serials
+        case .phoneControl:
+            break
+        }
+    }
+
+    private func captureDevices(for mode: PhoneCaptureMode, explicitSerial: String? = nil) -> [AndroidDevice] {
+        let serials = explicitSerial.map { Set([$0]) } ?? selectedCaptureDeviceSerials(for: mode)
+        return devices.filter { serials.contains($0.serial) && $0.state == .device }
     }
 
     public func captureScreenshot() async {
         await captureScreenshotWithOptions()
     }
 
-    public func captureScreenshotWithOptions() async {
+    public func captureScreenshotWithOptions(deviceSerial: String? = nil) async {
         guard !isCapturingScreenshot,
               screenRecordingSession == nil,
               !isStartingScreenRecording,
@@ -5470,49 +5771,91 @@ public final class AppModel: ObservableObject {
         defer { isCapturingScreenshot = false }
 
         do {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
+            let captureDevices = captureDevices(for: .screenshot, explicitSerial: deviceSerial)
+            guard !captureDevices.isEmpty else { throw FileOperationError.noDevice }
             try await adb.validateADB()
             var options = normalizedCaptureOptions(screenshotOptions)
             options.showTouches = false
             screenshotOptions = options
-            let activeRestorePlan = screenRecordingRestorePlan ?? phoneControlRestorePlan
-            let restorePlan: ScreenRecordingRestorePlan
-            let shouldRestoreAfterCapture: Bool
-            if let activeRestorePlan {
-                restorePlan = activeRestorePlan
-                shouldRestoreAfterCapture = false
-                await captureService.applyCapturePresentation(
-                    device: device,
-                    options: options,
-                    restorePlan: activeRestorePlan
-                )
-                await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
-            } else {
-                restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
-                shouldRestoreAfterCapture = true
-            }
-            do {
-                let url = try await captureService.screenshot(device: device)
-                if shouldRestoreAfterCapture {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                } else if phoneControlSession != nil {
-                    await reapplyPhoneControlPresentation(fallbackRestorePlan: restorePlan)
+            var preparedDevices: [PreparedCaptureDevice] = []
+            for device in captureDevices {
+                if let activeRestorePlan = phoneControlRestorePlans[device.serial] {
+                    await captureService.applyCapturePresentation(
+                        device: device,
+                        options: options,
+                        restorePlan: activeRestorePlan
+                    )
+                    await captureService.launchCaptureApp(
+                        device: device,
+                        packageName: options.normalizedPackageName
+                    )
+                    preparedDevices.append(PreparedCaptureDevice(
+                        device: device,
+                        restorePlan: activeRestorePlan,
+                        shouldRestoreAfterCapture: false
+                    ))
+                } else {
+                    let restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
+                    preparedDevices.append(PreparedCaptureDevice(
+                        device: device,
+                        restorePlan: restorePlan,
+                        shouldRestoreAfterCapture: true
+                    ))
                 }
-                let previewURL = try await prepareCapturedPreview(url)
+            }
+
+            var restoredPresentation = false
+            do {
+                let captureService = captureService
+                var screenshotURLsBySerial: [String: URL] = [:]
+                try await withThrowingTaskGroup(of: (String, URL).self) { group in
+                    for device in captureDevices {
+                        group.addTask {
+                            (device.serial, try await captureService.screenshot(device: device))
+                        }
+                    }
+                    for try await (serial, url) in group {
+                        screenshotURLsBySerial[serial] = url
+                    }
+                }
+                let orderedURLs = captureDevices.compactMap { screenshotURLsBySerial[$0.serial] }
+                let outputURL = try await captureCompositionService.combineScreenshots(orderedURLs)
+                if orderedURLs.count > 1 {
+                    orderedURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+                }
+                await restoreAfterScreenshot(preparedDevices)
+                restoredPresentation = true
+                let previewURL = try await prepareCapturedPreview(outputURL)
                 PreviewWindowPresenter.show(url: previewURL) { [weak self] in
                     self?.releaseCachedPreviewURL(previewURL)
                 }
-                statusMessage = "Screenshot captured and opened in a preview window."
+                statusMessage = captureDevices.count > 1
+                    ? "Side-by-side screenshot captured and opened in a preview window."
+                    : "Screenshot captured and opened in a preview window."
             } catch {
-                if shouldRestoreAfterCapture {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                } else if phoneControlSession != nil {
-                    await reapplyPhoneControlPresentation(fallbackRestorePlan: restorePlan)
+                if !restoredPresentation {
+                    await restoreAfterScreenshot(preparedDevices)
                 }
                 throw error
             }
         } catch {
             handleOperationError(error)
+        }
+    }
+
+    private func restoreAfterScreenshot(_ preparedDevices: [PreparedCaptureDevice]) async {
+        for prepared in preparedDevices {
+            if prepared.shouldRestoreAfterCapture {
+                await captureService.restoreScreenRecordingSettings(
+                    serial: prepared.device.serial,
+                    restorePlan: prepared.restorePlan
+                )
+            } else if phoneControlSession(for: prepared.device.serial) != nil {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: prepared.device.serial,
+                    fallbackRestorePlan: prepared.restorePlan
+                )
+            }
         }
     }
 
@@ -5520,7 +5863,7 @@ public final class AppModel: ObservableObject {
         requestScreenRecording()
     }
 
-    public func startScreenRecording() async {
+    public func startScreenRecording(deviceSerial: String? = nil) async {
         guard screenRecordingSession == nil,
               !isCapturingScreenshot,
               !isLaunchingScrcpy,
@@ -5528,51 +5871,134 @@ public final class AppModel: ObservableObject {
               !isFinishingScreenRecording else { return }
 
         isStartingScreenRecording = true
+        screenRecordingRequestDeviceSerial = deviceSerial
         statusMessage = "Preparing screen recording..."
         defer {
             isStartingScreenRecording = false
+            screenRecordingRequestDeviceSerial = nil
         }
 
         do {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
+            let captureDevices = captureDevices(for: .recording, explicitSerial: deviceSerial)
+            guard !captureDevices.isEmpty else { throw FileOperationError.noDevice }
             try await adb.validateADB()
             let options = normalizedCaptureOptions(screenRecordingOptions)
             screenRecordingOptions = options
 
-            let restorePlan: ScreenRecordingRestorePlan
-            if let phoneControlRestorePlan {
-                restorePlan = phoneControlRestorePlan
-                await captureService.applyCapturePresentation(
-                    device: device,
-                    options: options,
-                    restorePlan: phoneControlRestorePlan
-                )
-                await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
-            } else {
-                restorePlan = await captureService.prepareScreenRecording(device: device, options: options)
+            var restorePlans: [String: ScreenRecordingRestorePlan] = [:]
+            for device in captureDevices {
+                if let phoneControlRestorePlan = phoneControlRestorePlans[device.serial] {
+                    restorePlans[device.serial] = phoneControlRestorePlan
+                    await captureService.applyCapturePresentation(
+                        device: device,
+                        options: options,
+                        restorePlan: phoneControlRestorePlan
+                    )
+                    await captureService.launchCaptureApp(
+                        device: device,
+                        packageName: options.normalizedPackageName
+                    )
+                } else {
+                    restorePlans[device.serial] = await captureService.prepareScreenRecording(
+                        device: device,
+                        options: options
+                    )
+                }
             }
 
-            do {
-                let handle = try await captureService.startScreenRecording(device: device, options: options)
-                let session = ScreenRecordingSession(
+            let captureService = captureService
+            var outcomes: [ScreenRecordingLaunchOutcome] = []
+            await withTaskGroup(of: ScreenRecordingLaunchOutcome.self) { group in
+                for device in captureDevices {
+                    group.addTask {
+                        do {
+                            let handle = try await captureService.startScreenRecording(
+                                device: device,
+                                options: options
+                            )
+                            return ScreenRecordingLaunchOutcome(
+                                device: device,
+                                handle: handle,
+                                errorMessage: nil
+                            )
+                        } catch {
+                            return ScreenRecordingLaunchOutcome(
+                                device: device,
+                                handle: nil,
+                                errorMessage: error.localizedDescription
+                            )
+                        }
+                    }
+                }
+                for await outcome in group {
+                    outcomes.append(outcome)
+                }
+            }
+
+            let handles = Dictionary(
+                uniqueKeysWithValues: outcomes.compactMap { outcome in
+                    outcome.handle.map { (outcome.device.serial, $0) }
+                }
+            )
+            if let failure = outcomes.first(where: { $0.errorMessage != nil }) {
+                await discardPartiallyStartedRecordings(handles: handles, restorePlans: restorePlans)
+                throw FileOperationError.commandFailed(
+                    failure.errorMessage ?? "A selected display could not start recording."
+                )
+            }
+
+            let deviceSessions = captureDevices.compactMap { device -> ScreenRecordingDeviceSession? in
+                guard let handle = handles[device.serial] else { return nil }
+                return ScreenRecordingDeviceSession(
                     deviceSerial: device.serial,
                     deviceTitle: device.title,
-                    startedAt: handle.startedAt,
-                    options: options
+                    startedAt: handle.startedAt
                 )
-                screenRecordingHandle = handle
-                screenRecordingRestorePlan = restorePlan
-                screenRecordingSession = session
-                statusMessage = "Recording \(device.title)."
-                startScreenRecordingMonitor(sessionID: session.id, handle: handle)
-            } catch {
-                if phoneControlSession == nil {
-                    await captureService.restoreScreenRecordingSettings(serial: device.serial, restorePlan: restorePlan)
-                }
-                throw error
             }
+            let session = ScreenRecordingSession(devices: deviceSessions, options: options)
+            screenRecordingHandles = handles
+            screenRecordingRestorePlans = restorePlans
+            screenRecordingSession = session
+            statusMessage = captureDevices.count > 1
+                ? "Recording \(captureDevices.count) displays."
+                : "Recording \(captureDevices[0].title)."
+            startScreenRecordingMonitor(sessionID: session.id, handles: handles)
+        } catch FileOperationError.commandFailed(let message) where isADBConnectionFailure(message) {
+            handleADBConnectionFailure()
+        } catch FileOperationError.commandFailed(let message) {
+            alert = UserAlert(title: "Recording Couldn't Start", message: message)
+            statusMessage = "Screen recording could not start."
         } catch {
             handleOperationError(error)
+        }
+    }
+
+    private func discardPartiallyStartedRecordings(
+        handles: [String: ADBScreenRecordingProcess],
+        restorePlans: [String: ScreenRecordingRestorePlan]
+    ) async {
+        handles.values.forEach { $0.stop() }
+        for (serial, restorePlan) in restorePlans {
+            if let handle = handles[serial] {
+                let discardedURL = try? await captureService.finishScreenRecording(
+                    handle: handle,
+                    restorePlan: restorePlan
+                )
+                if let discardedURL {
+                    try? FileManager.default.removeItem(at: discardedURL)
+                }
+            } else if phoneControlSession(for: serial) == nil {
+                await captureService.restoreScreenRecordingSettings(
+                    serial: serial,
+                    restorePlan: restorePlan
+                )
+            }
+            if phoneControlSession(for: serial) != nil {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlan
+                )
+            }
         }
     }
 
@@ -5580,10 +6006,30 @@ public final class AppModel: ObservableObject {
         await finishScreenRecording(interrupt: true)
     }
 
-    public func launchScrcpy() async {
-        if let phoneControlSession {
-            startScrcpyForegrounding(processIdentifier: phoneControlSession.processIdentifier)
-            statusMessage = "Phone Control is already open for \(phoneControlSession.deviceTitle)."
+    public func togglePhoneControlRecording(deviceSerial: String) async {
+        guard phoneControlSession(for: deviceSerial) != nil else { return }
+        if isScreenRecording(deviceSerial: deviceSerial) {
+            await stopScreenRecording()
+            return
+        }
+        if let session = screenRecordingSession {
+            alert = UserAlert(
+                title: "Recording Already in Progress",
+                message: "Stop the recording of \(session.deviceTitle) before starting another one."
+            )
+            return
+        }
+        await startScreenRecording(deviceSerial: deviceSerial)
+    }
+
+    public func launchScrcpy(deviceSerial: String? = nil) async {
+        guard let device = deviceSerial.flatMap({ serial in devices.first { $0.serial == serial } }) ?? selectedDevice else {
+            handleADBConnectionFailure()
+            return
+        }
+        if let session = phoneControlSession(for: device.serial) {
+            showPhoneControl(deviceSerial: session.deviceSerial)
+            statusMessage = "Phone Control is already open for \(session.deviceTitle)."
             return
         }
         guard !isCapturingScreenshot,
@@ -5591,24 +6037,27 @@ public final class AppModel: ObservableObject {
               !isStartingScreenRecording,
               !isFinishingScreenRecording else { return }
         isLaunchingScrcpy = true
-        statusMessage = "Opening scrcpy..."
+        let deviceOptions = settings.phoneControlOptions(for: device.serial)
+        statusMessage = "Opening Phone Control..."
         defer {
             isLaunchingScrcpy = false
         }
 
         do {
-            guard let device = selectedDevice else { throw FileOperationError.noDevice }
             try await adb.validatePhoneControlTools()
             let options = normalizedCaptureOptions(phoneControlOptions)
             phoneControlOptions = options
             let restorePlan: ScreenRecordingRestorePlan
-            let sharesRecordingPresentation = screenRecordingRestorePlan != nil
-            if let screenRecordingRestorePlan {
-                restorePlan = screenRecordingRestorePlan
+            let recordingRestorePlan = screenRecordingSession?.deviceSerials.contains(device.serial) == true
+                ? screenRecordingRestorePlans[device.serial]
+                : nil
+            let sharesRecordingPresentation = recordingRestorePlan != nil
+            if let recordingRestorePlan {
+                restorePlan = recordingRestorePlan
                 await captureService.applyCapturePresentation(
                     device: device,
                     options: options,
-                    restorePlan: screenRecordingRestorePlan
+                    restorePlan: recordingRestorePlan
                 )
                 await captureService.launchCaptureApp(device: device, packageName: options.normalizedPackageName)
             } else {
@@ -5616,10 +6065,24 @@ public final class AppModel: ObservableObject {
             }
             let observation: DetachedLaunchObservation
             do {
+                let preferredPlacement = PhoneControlCompanionWindowPresenter.preferredScrcpyPlacement(
+                    sessionIndex: phoneControlSessions.count
+                )
+                let placement = preferredPlacement.map {
+                    ScrcpyWindowPlacement(
+                        x: $0.x,
+                        y: $0.y,
+                        width: $0.width,
+                        height: $0.height,
+                        alwaysOnTop: deviceOptions.alwaysOnTop
+                    )
+                }
                 observation = try await adb.launchScrcpy(
                     serial: device.serial,
+                    windowTitle: phoneControlWindowTitle(for: device),
                     options: options,
-                    placement: PhoneCaptureWindowPresenter.preferredScrcpyPlacement()
+                    deviceOptions: deviceOptions,
+                    placement: placement
                 )
             } catch {
                 if !sharesRecordingPresentation {
@@ -5629,7 +6092,7 @@ public final class AppModel: ObservableObject {
             }
             registerPhoneControl(observation: observation, device: device, restorePlan: restorePlan)
             suppressedToolSetup.remove(.scrcpy)
-            statusMessage = "Phone Control opened beside the capture controls."
+            statusMessage = "Phone Control opened for \(device.title)."
         } catch FileOperationError.noDevice {
             handleADBConnectionFailure()
         } catch FileOperationError.commandFailed(let message) where isADBConnectionFailure(message) {
@@ -5644,18 +6107,25 @@ public final class AppModel: ObservableObject {
                 force: true
             )
         } catch FileOperationError.toolUnavailable(let tool, let reason) {
-            presentToolSetup(tool: tool, issue: reason, resumeAction: .phoneControl, force: true)
+            if isTransientToolTimeout(tool: tool, reason: reason) {
+                presentTransientToolTimeout(reason)
+            } else {
+                presentToolSetup(tool: tool, issue: reason, resumeAction: .phoneControl, force: true)
+            }
         } catch {
             alert = UserAlert(title: "Phone Control Couldn't Open", message: "Phone Control could not start. Try again or repair Phone Tools in Settings → Tools.")
             statusMessage = "Phone Control could not open."
         }
     }
 
-    public func stopPhoneControl() {
-        guard let phoneControlSession else { return }
-        phoneControlStopWasRequested = true
-        statusMessage = "Closing Phone Control..."
-        let processIdentifier = phoneControlSession.processIdentifier
+    public func stopPhoneControl(deviceSerial: String? = nil) {
+        let targetSerial = deviceSerial ?? phoneControlSession?.deviceSerial
+        guard let targetSerial,
+              let session = phoneControlSession(for: targetSerial) else { return }
+        phoneControlStopRequests.insert(targetSerial)
+        statusMessage = "Closing Phone Control for \(session.deviceTitle)..."
+        PhoneControlCompanionWindowPresenter.close(deviceSerial: targetSerial)
+        let processIdentifier = session.processIdentifier
         Darwin.kill(pid_t(processIdentifier), SIGINT)
         Task.detached(priority: .utility) {
             try? await Task.sleep(for: .seconds(2))
@@ -5665,6 +6135,42 @@ public final class AppModel: ObservableObject {
             if Self.isProcessAlive(processIdentifier) {
                 Darwin.kill(pid_t(processIdentifier), SIGKILL)
             }
+        }
+    }
+
+    public func stopAllPhoneControls() {
+        for session in phoneControlSessions {
+            stopPhoneControl(deviceSerial: session.deviceSerial)
+        }
+    }
+
+    public func showPhoneControl(deviceSerial: String? = nil) {
+        let targetSerial = deviceSerial ?? phoneControlSession?.deviceSerial
+        guard let targetSerial,
+              let session = phoneControlSession(for: targetSerial) else { return }
+        startScrcpyForegrounding(processIdentifier: session.processIdentifier)
+        PhoneControlCompanionWindowPresenter.show(
+            model: self,
+            session: session,
+            windowTitle: phoneControlWindowTitle(deviceTitle: session.deviceTitle, serial: session.deviceSerial)
+        )
+    }
+
+    func performPhoneControlShortcut(_ shortcut: PhoneControlShortcut, deviceSerial: String) async {
+        guard phoneControlSession(for: deviceSerial) != nil else { return }
+        do {
+            let result = try await adb.shell(
+                serial: deviceSerial,
+                shortcut.adbCommand,
+                allowFailure: true,
+                timeout: 8
+            )
+            guard result.exitCode == 0 else {
+                throw FileOperationError.commandFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
+            }
+            statusMessage = shortcut.successMessage
+        } catch {
+            handleOperationError(error)
         }
     }
 
@@ -5681,11 +6187,21 @@ public final class AppModel: ObservableObject {
     }
 
     public func captureAppSelectionDidChange(options: ScreenRecordingOptions) {
-        guard screenRecordingSession != nil || phoneControlSession != nil,
-              let device = selectedDevice else { return }
+        guard screenRecordingSession != nil || phoneControlSession != nil else { return }
+        let targetDevices: [AndroidDevice]
+        if let screenRecordingSession {
+            let serials = Set(screenRecordingSession.deviceSerials)
+            targetDevices = devices.filter { serials.contains($0.serial) }
+        } else if let selectedDevice {
+            targetDevices = [selectedDevice]
+        } else {
+            targetDevices = []
+        }
         let packageName = options.normalizedPackageName
-        Task { [captureService] in
-            await captureService.launchCaptureApp(device: device, packageName: packageName)
+        Task { [captureService, targetDevices] in
+            for device in targetDevices {
+                await captureService.launchCaptureApp(device: device, packageName: packageName)
+            }
         }
     }
 
@@ -5730,15 +6246,18 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    private func startScreenRecordingMonitor(sessionID: ScreenRecordingSession.ID, handle: ADBScreenRecordingProcess) {
+    private func startScreenRecordingMonitor(
+        sessionID: ScreenRecordingSession.ID,
+        handles: [String: ADBScreenRecordingProcess]
+    ) {
         screenRecordingMonitorTask?.cancel()
         screenRecordingMonitorTask = Task { @MainActor [weak self] in
-            while handle.isRunning {
+            while handles.values.allSatisfy(\.isRunning) {
                 guard !Task.isCancelled else { return }
                 try? await Task.sleep(for: .milliseconds(250))
             }
             guard !Task.isCancelled else { return }
-            await self?.finishScreenRecording(interrupt: false, sessionID: sessionID)
+            await self?.finishScreenRecording(interrupt: true, sessionID: sessionID)
         }
     }
 
@@ -5746,57 +6265,89 @@ public final class AppModel: ObservableObject {
         guard !isFinishingScreenRecording,
               let session = screenRecordingSession,
               sessionID == nil || session.id == sessionID,
-              let handle = screenRecordingHandle else {
+              !screenRecordingHandles.isEmpty else {
             return
         }
 
         isFinishingScreenRecording = true
         beginTrackedOperation()
         defer { endTrackedOperation() }
+        let handles = screenRecordingHandles
         if interrupt {
-            handle.stop()
-            Task.detached(priority: .utility) {
+            handles.values.forEach { $0.stop() }
+            Task.detached(priority: .utility) { [handles] in
                 try? await Task.sleep(for: .seconds(2))
-                if handle.isRunning {
+                for handle in handles.values where handle.isRunning {
                     handle.terminate()
                 }
             }
         }
         statusMessage = "Saving screen recording..."
-        let recordingRestorePlan = screenRecordingRestorePlan
-        let shouldReapplyForPhoneControl = phoneControlSession != nil
+        let restorePlans = screenRecordingRestorePlans
+        let phoneControlSerials = Set(session.deviceSerials.filter { phoneControlSession(for: $0) != nil })
 
+        var sourcesBySerial: [String: CapturedVideoSource] = [:]
         do {
-            let url = try await captureService.finishScreenRecording(
-                handle: handle,
-                restorePlan: recordingRestorePlan
-            )
+            let captureService = captureService
+            try await withThrowingTaskGroup(of: (String, CapturedVideoSource).self) { group in
+                for (serial, handle) in handles {
+                    let restorePlan = restorePlans[serial]
+                    group.addTask {
+                        let url = try await captureService.finishScreenRecording(
+                            handle: handle,
+                            restorePlan: restorePlan
+                        )
+                        return (serial, CapturedVideoSource(url: url, startedAt: handle.startedAt))
+                    }
+                }
+                for try await (serial, source) in group {
+                    sourcesBySerial[serial] = source
+                }
+            }
+            let orderedSources = session.deviceSerials.compactMap { sourcesBySerial[$0] }
+            let url = try await captureCompositionService.combineRecordings(orderedSources)
+            if orderedSources.count > 1 {
+                orderedSources.forEach { try? FileManager.default.removeItem(at: $0.url) }
+            }
             clearScreenRecordingState()
-            if shouldReapplyForPhoneControl {
-                await reapplyPhoneControlPresentation(fallbackRestorePlan: recordingRestorePlan)
+            for serial in phoneControlSerials {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlans[serial]
+                )
             }
             let previewURL = try await prepareCapturedPreview(url)
             PreviewWindowPresenter.show(url: previewURL) { [weak self] in
                 self?.releaseCachedPreviewURL(previewURL)
             }
-            statusMessage = "Screen recording saved and opened in a preview window."
+            statusMessage = session.devices.count > 1
+                ? "Side-by-side recording saved and opened in a preview window."
+                : "Screen recording saved and opened in a preview window."
         } catch {
+            sourcesBySerial.values.forEach { try? FileManager.default.removeItem(at: $0.url) }
             clearScreenRecordingState()
-            if shouldReapplyForPhoneControl {
-                await reapplyPhoneControlPresentation(fallbackRestorePlan: recordingRestorePlan)
+            for serial in phoneControlSerials {
+                await reapplyPhoneControlPresentation(
+                    deviceSerial: serial,
+                    fallbackRestorePlan: restorePlans[serial]
+                )
             }
-            handleOperationError(error)
+            alert = UserAlert(
+                title: "Recording Couldn't Finish",
+                message: "The selected displays could not be saved together. Make sure each display is connected, awake, and able to record, then try again."
+            )
+            statusMessage = "Screen recording could not be saved."
         }
     }
 
     private func clearScreenRecordingState() {
         screenRecordingMonitorTask?.cancel()
         screenRecordingMonitorTask = nil
-        screenRecordingHandle = nil
-        screenRecordingRestorePlan = nil
+        screenRecordingHandles = [:]
+        screenRecordingRestorePlans = [:]
         screenRecordingSession = nil
         isFinishingScreenRecording = false
-        if phoneControlSession == nil {
+        if phoneControlSessions.isEmpty {
             capturePresentationUpdateTask?.cancel()
             isApplyingCapturePresentation = false
         }
@@ -5822,14 +6373,27 @@ public final class AppModel: ObservableObject {
             deviceTitle: device.title,
             processIdentifier: observation.processIdentifier
         )
-        phoneControlMonitorTask?.cancel()
-        phoneControlStopWasRequested = false
-        phoneControlRestorePlan = restorePlan
-        phoneControlSession = session
+        phoneControlMonitorTasks[device.serial]?.cancel()
+        phoneControlStopRequests.remove(device.serial)
+        phoneControlRestorePlans[device.serial] = restorePlan
+        phoneControlSessions.removeAll { $0.deviceSerial == device.serial }
+        phoneControlSessions.append(session)
+        phoneControlCapabilityStates[device.serial] = .checking
         startScrcpyForegrounding(processIdentifier: observation.processIdentifier)
+        PhoneControlCompanionWindowPresenter.show(
+            model: self,
+            session: session,
+            windowTitle: phoneControlWindowTitle(for: device)
+        )
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            async let battery: Void = self.refreshBatteryStatus(for: device)
+            async let capabilities: Void = self.refreshPhoneControlCapabilities(for: device)
+            _ = await (battery, capabilities)
+        }
 
         let processHandle = observation.processHandle
-        phoneControlMonitorTask = Task { @MainActor [weak self] in
+        phoneControlMonitorTasks[device.serial] = Task { @MainActor [weak self] in
             let exitCode = await Task.detached(priority: .utility) {
                 processHandle.waitUntilExit()
             }.value
@@ -5843,28 +6407,31 @@ public final class AppModel: ObservableObject {
     }
 
     private func phoneControlDidExit(processIdentifier: Int32, exitCode: Int32, logURL: URL) async {
-        guard let session = phoneControlSession,
-              session.processIdentifier == processIdentifier else { return }
+        guard let session = phoneControlSessions.first(where: { $0.processIdentifier == processIdentifier }) else {
+            return
+        }
 
-        let stopWasRequested = phoneControlStopWasRequested
-        phoneControlStopWasRequested = false
-        let restorePlan = phoneControlRestorePlan
-        phoneControlSession = nil
-        phoneControlRestorePlan = nil
-        phoneControlMonitorTask = nil
+        let stopWasRequested = phoneControlStopRequests.remove(session.deviceSerial) != nil
+        let restorePlan = phoneControlRestorePlans.removeValue(forKey: session.deviceSerial)
+        phoneControlSessions.removeAll { $0.processIdentifier == processIdentifier }
+        phoneControlCapabilityStates[session.deviceSerial] = nil
+        phoneControlMonitorTasks[session.deviceSerial] = nil
+        PhoneControlCompanionWindowPresenter.close(deviceSerial: session.deviceSerial)
 
-        if screenRecordingSession != nil, !isFinishingScreenRecording,
-           let device = selectedDevice,
-           device.serial == session.deviceSerial {
+        if screenRecordingSession?.deviceSerials.contains(session.deviceSerial) == true,
+           !isFinishingScreenRecording,
+           let device = devices.first(where: { $0.serial == session.deviceSerial }) {
             await captureService.applyCapturePresentation(
                 device: device,
                 options: normalizedCaptureOptions(screenRecordingOptions),
-                restorePlan: screenRecordingRestorePlan ?? restorePlan
+                restorePlan: screenRecordingRestorePlans[session.deviceSerial] ?? restorePlan
             )
         } else if !isFinishingScreenRecording {
-            capturePresentationUpdateTask?.cancel()
-            capturePresentationRevision += 1
-            isApplyingCapturePresentation = false
+            if selectedDevice?.serial == session.deviceSerial {
+                capturePresentationUpdateTask?.cancel()
+                capturePresentationRevision += 1
+                isApplyingCapturePresentation = false
+            }
             await captureService.restoreScreenRecordingSettings(
                 serial: session.deviceSerial,
                 restorePlan: restorePlan
@@ -5899,7 +6466,13 @@ public final class AppModel: ObservableObject {
             statusMessage = "Phone Control disconnected."
             alert = UserAlert(
                 title: "Phone Control Disconnected",
-                message: "Reconnect the phone, approve debugging if asked, and try again."
+                message: "Reconnect the device, approve debugging if asked, and try again.",
+                onDismiss: { [weak self] in
+                    self?.closeDisconnectedPhoneControl(
+                        deviceSerial: session.deviceSerial,
+                        processIdentifier: session.processIdentifier
+                    )
+                }
             )
         } else {
             statusMessage = "Phone Control closed unexpectedly."
@@ -5910,36 +6483,79 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    private func closeDisconnectedPhoneControl(deviceSerial: String, processIdentifier: Int32) {
+        PhoneControlCompanionWindowPresenter.close(deviceSerial: deviceSerial)
+        guard Self.isProcessAlive(processIdentifier) else { return }
+        Darwin.kill(pid_t(processIdentifier), SIGTERM)
+    }
+
+    private func refreshPhoneControlCapabilities(for device: AndroidDevice) async {
+        guard phoneControlSession(for: device.serial) != nil else { return }
+        do {
+            let capabilities = try await captureService.phoneControlCapabilities(device: device)
+            guard phoneControlSession(for: device.serial) != nil else { return }
+            phoneControlCapabilityStates[device.serial] = .available(capabilities)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard phoneControlSession(for: device.serial) != nil else { return }
+            phoneControlCapabilityStates[device.serial] = .unavailable
+        }
+    }
+
     private func applyCapturePresentation(revision: Int, options: ScreenRecordingOptions) async {
         guard revision == capturePresentationRevision,
-              let device = selectedDevice,
-              device.state == .device,
               screenRecordingSession != nil || phoneControlSession != nil else {
             return
         }
 
-        let restorePlan = screenRecordingRestorePlan ?? phoneControlRestorePlan
+        let targetDevices: [AndroidDevice]
+        if let screenRecordingSession {
+            let serials = Set(screenRecordingSession.deviceSerials)
+            targetDevices = devices.filter { serials.contains($0.serial) && $0.state == .device }
+        } else if let selectedDevice, selectedDevice.state == .device {
+            targetDevices = [selectedDevice]
+        } else {
+            targetDevices = []
+        }
+        guard !targetDevices.isEmpty else { return }
+
         let options = normalizedCaptureOptions(options)
         isApplyingCapturePresentation = true
-        await captureService.applyCapturePresentation(
-            device: device,
-            options: options,
-            restorePlan: restorePlan
-        )
+        for device in targetDevices {
+            let restorePlan = screenRecordingRestorePlans[device.serial]
+                ?? phoneControlRestorePlans[device.serial]
+            await captureService.applyCapturePresentation(
+                device: device,
+                options: options,
+                restorePlan: restorePlan
+            )
+        }
         guard revision == capturePresentationRevision else { return }
         isApplyingCapturePresentation = false
         statusMessage = "Updated phone capture settings."
     }
 
-    private func reapplyPhoneControlPresentation(fallbackRestorePlan: ScreenRecordingRestorePlan?) async {
-        guard let phoneControlSession,
-              let device = selectedDevice,
-              device.serial == phoneControlSession.deviceSerial else { return }
+    private func reapplyPhoneControlPresentation(
+        deviceSerial: String,
+        fallbackRestorePlan: ScreenRecordingRestorePlan?
+    ) async {
+        guard phoneControlSession(for: deviceSerial) != nil,
+              let device = devices.first(where: { $0.serial == deviceSerial }) else { return }
         await captureService.applyCapturePresentation(
             device: device,
             options: normalizedCaptureOptions(phoneControlOptions),
-            restorePlan: phoneControlRestorePlan ?? fallbackRestorePlan
+            restorePlan: phoneControlRestorePlans[deviceSerial] ?? fallbackRestorePlan
         )
+    }
+
+    private func phoneControlWindowTitle(for device: AndroidDevice) -> String {
+        phoneControlWindowTitle(deviceTitle: device.title, serial: device.serial)
+    }
+
+    private func phoneControlWindowTitle(deviceTitle: String, serial: String) -> String {
+        let serialSuffix = serial.count > 8 ? String(serial.suffix(8)) : serial
+        return "ASOP File Browser — \(deviceTitle) [\(serialSuffix)]"
     }
 
     private nonisolated static func isProcessAlive(_ processIdentifier: Int32) -> Bool {
@@ -6324,22 +6940,113 @@ public final class AppModel: ObservableObject {
     }
 
     private func loadPackagesThrowing() async throws {
-        guard let device = selectedDevice else { throw FileOperationError.noDevice }
-        async let runningProcessNames = appManager.runningProcessNames(device: device)
+        guard let device = selectedDevice, device.state == .device else {
+            throw FileOperationError.noDevice
+        }
+        packageLoadRevision &+= 1
+        let loadRevision = packageLoadRevision
+        let requestedKind = appKind
         let basePackages = try await appManager.packages(device: device, kind: appKind)
-        var enriched: [AndroidPackage] = []
-        for package in basePackages {
-            enriched.append((try? await appManager.details(device: device, package: package)) ?? package)
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+
+        var visiblePackages = requestedKind == .all
+            ? basePackages
+            : basePackages.filter { $0.kind == requestedKind }
+        applyLoadedPackages(visiblePackages)
+        statusMessage = "Loaded \(visiblePackages.count) app\(visiblePackages.count == 1 ? "" : "s")."
+
+        let processNames: Set<String>
+        do {
+            processNames = try await appManager.runningProcessNames(device: device)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            processNames = []
         }
-        if appKind != .all {
-            enriched = enriched.filter { $0.kind == appKind }
+        try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+        visiblePackages = markRunning(visiblePackages, processNames: processNames)
+        applyLoadedPackages(visiblePackages)
+
+        do {
+            let presentations = try await appManager.presentations(
+                device: device,
+                packages: visiblePackages
+            ) { [weak self] batch in
+                guard let self else { throw CancellationError() }
+                try await self.applyPackagePresentationBatch(
+                    batch,
+                    device: device,
+                    kind: requestedKind,
+                    revision: loadRevision
+                )
+            }
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            visiblePackages = visiblePackages.map { package in
+                guard let presentation = presentations[package.packageName] else { return package }
+                var presentedPackage = package
+                presentedPackage.appLabel = presentation.label
+                presentedPackage.iconPNGData = presentation.iconPNGData
+                return presentedPackage
+            }
+            applyLoadedPackages(visiblePackages)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Package names and deterministic artwork remain available when a
+            // device cannot provide richer launcher metadata.
         }
-        let processNames = (try? await runningProcessNames) ?? []
-        enriched = markRunning(enriched, processNames: processNames)
+
+        for package in visiblePackages {
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            let enrichedPackage: AndroidPackage
+            do {
+                enrichedPackage = try await appManager.details(device: device, package: package)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
+            }
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            guard let index = packages.firstIndex(where: { $0.id == enrichedPackage.id }) else { continue }
+            packages[index] = enrichedPackage
+        }
+    }
+
+    private func applyPackagePresentationBatch(
+        _ presentations: [String: AndroidAppPresentation],
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try validatePackageLoad(device: device, kind: kind, revision: revision)
+        packages = packages.map { package in
+            guard let presentation = presentations[package.packageName] else { return package }
+            var updated = package
+            updated.appLabel = presentation.label
+            updated.iconPNGData = presentation.iconPNGData
+            return updated
+        }
+    }
+
+    private func validatePackageLoad(
+        device: AndroidDevice,
+        kind: AppKind,
+        revision: Int
+    ) throws {
+        try Task.checkCancellation()
+        guard packageLoadRevision == revision,
+              appKind == kind,
+              selectedDeviceID == device.id,
+              devices.contains(where: { $0.id == device.id && $0.state == .device }) else {
+            throw CancellationError()
+        }
+    }
+
+    private func applyLoadedPackages(_ loadedPackages: [AndroidPackage]) {
         let selectedIDsAtApply = selectedPackageIDs
         let lastSelectedIDAtApply = lastSelectedPackageID
-        let availableIDs = Set(enriched.map(\.id))
-        packages = enriched
+        let availableIDs = Set(loadedPackages.map(\.id))
+        packages = loadedPackages
         selectedPackageIDs = selectedIDsAtApply.intersection(availableIDs)
         expandedStorageAppPackageIDs = expandedStorageAppPackageIDs.intersection(availableIDs)
         loadingStorageAppPackageIDs = loadingStorageAppPackageIDs.intersection(availableIDs)
@@ -6582,15 +7289,27 @@ public final class AppModel: ObservableObject {
 
     private func refreshBatteryStatus() async {
         guard let device = selectedDevice, device.state == .device else { return }
+        await refreshBatteryStatus(for: device)
+    }
+
+    private func refreshBatteryStatus(for device: AndroidDevice) async {
+        guard device.state == .device else { return }
         do {
             if let status = try await deviceManager.batteryStatus(device: device) {
-                guard selectedDevice?.id == device.id else { return }
+                guard devices.contains(where: { $0.id == device.id && $0.state == .device }) else { return }
                 batteryStatuses[device.id] = status
             }
         } catch {
-            if selectedDevice?.id == device.id {
+            if devices.contains(where: { $0.id == device.id }) {
                 batteryStatuses[device.id] = nil
             }
+        }
+    }
+
+    private func refreshPhoneControlBatteryStatuses() async {
+        let activeSerials = Set(phoneControlSessions.map(\.deviceSerial))
+        for device in devices where activeSerials.contains(device.serial) && device.id != selectedDevice?.id {
+            await refreshBatteryStatus(for: device)
         }
     }
 
@@ -6605,8 +7324,8 @@ public final class AppModel: ObservableObject {
         let selectedDeviceIsReady = found.first { $0.id == selectedDeviceID }?.state == .device
         if selectedDeviceID == nil
             || !found.contains(where: { $0.id == selectedDeviceID })
-            || (!selectedDeviceIsReady && found.contains(where: { $0.state == .device })) {
-            selectedDeviceID = found.first(where: { $0.state == .device })?.id ?? found.first?.id
+            || !selectedDeviceIsReady {
+            selectedDeviceID = found.first(where: { $0.state == .device })?.id
         }
 
         if previousSelectedDeviceID != selectedDeviceID {
@@ -6616,6 +7335,10 @@ public final class AppModel: ObservableObject {
 
         if selectedDevice?.state != .device {
             clearADBOnlyState()
+            if hadReadyADBDevice, connectionMode == .adb {
+                shouldShowADBSetupAfterConnectionModeSwitch = true
+                sidebarSelection = nil
+            }
         }
 
         return !hadReadyADBDevice && hasReadyADBDevice
@@ -6677,14 +7400,17 @@ public final class AppModel: ObservableObject {
 
     func performCancellableRead(
         _ message: String,
+        deviceScoped: Bool = true,
         operation: @escaping @MainActor () async throws -> Void
     ) async {
         guard !isPreparingForTermination else { return }
 
         let operationID = UUID()
+        let deviceSessionRevision = adbDeviceSessionRevision
         beginTrackedOperation(blocksTermination: false)
         defer {
             cancellableReadTasks[operationID] = nil
+            deviceScopedReadTaskIDs.remove(operationID)
             endTrackedOperation(blocksTermination: false)
         }
         statusMessage = message
@@ -6692,14 +7418,23 @@ public final class AppModel: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                try Task.checkCancellation()
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else {
+                    throw CancellationError()
+                }
                 try await operation()
+                try Task.checkCancellation()
             } catch is CancellationError {
                 return
             } catch {
+                guard !deviceScoped || deviceSessionRevision == self.adbDeviceSessionRevision else { return }
                 handleOperationError(error)
             }
         }
         cancellableReadTasks[operationID] = task
+        if deviceScoped {
+            deviceScopedReadTaskIDs.insert(operationID)
+        }
         await withTaskCancellationHandler {
             await task.value
         } onCancel: {
@@ -6735,6 +7470,12 @@ public final class AppModel: ObservableObject {
         isBusy = operationActivity.isBusy
     }
 
+    private func cancelDeviceScopedReadWork() {
+        for operationID in deviceScopedReadTaskIDs {
+            cancellableReadTasks[operationID]?.cancel()
+        }
+    }
+
     private func endTrackedOperation(blocksTermination: Bool = true) {
         operationActivity.end(blocksTermination: blocksTermination)
         isBusy = operationActivity.isBusy
@@ -6764,10 +7505,14 @@ public final class AppModel: ObservableObject {
             }
             presentToolSetup(tool: ToolchainTool(rawValue: tool.lowercased()) ?? .adb, force: true)
         case FileOperationError.toolUnavailable(let tool, let reason):
-            if tool == .adb {
-                adbRuntimeIssue = reason
+            if isTransientToolTimeout(tool: tool, reason: reason) {
+                presentTransientToolTimeout(reason)
+            } else {
+                if tool == .adb {
+                    adbRuntimeIssue = reason
+                }
+                presentToolSetup(tool: tool, issue: reason, force: true)
             }
-            presentToolSetup(tool: tool, issue: reason, force: true)
         default:
             alert = UserAlert(error: error)
             statusMessage = error.localizedDescription
@@ -7069,6 +7814,7 @@ public final class AppModel: ObservableObject {
         selectedAppStorageLocation = nil
         expandedStorageAppPackageIDs.removeAll()
         loadingStorageAppPackageIDs.removeAll()
+        packageLoadRevision &+= 1
         captureAppChoices.removeAll()
         captureAppChoicesDeviceSerial = nil
         thumbnailURLs.removeAll()
@@ -7084,6 +7830,12 @@ public final class AppModel: ObservableObject {
         fileUndoStack.removeAll()
         fileRedoStack.removeAll()
         fileHistoryRevision &+= 1
+    }
+
+    private func invalidateADBDeviceSession() {
+        adbDeviceSessionRevision &+= 1
+        cancelDeviceScopedReadWork()
+        resetADBSessionStateForDeviceChange()
     }
 
     private func clearADBOnlyState(clearDevices: Bool = false) {
@@ -7184,6 +7936,9 @@ public final class AppModel: ObservableObject {
 
     private func commandFailureTitle(for message: String) -> String {
         let lowercased = message.lowercased()
+        if lowercased.contains("took too long") {
+            return "Device Didn’t Respond"
+        }
         if lowercased.contains("permission denied") {
             return "Folder Unavailable"
         }
@@ -7195,10 +7950,25 @@ public final class AppModel: ObservableObject {
 
     private func commandFailureMessage(for message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.localizedCaseInsensitiveContains("took too long") {
+            return "The device did not respond in time. It may still finish the change. Wait a moment, then try again."
+        }
         if trimmed.localizedCaseInsensitiveContains("permission denied") {
             return "\(trimmed)\n\nAndroid blocked access to this location. Shared storage folders are usually available; protected app-private folders may require a debuggable app, root, or a different access method."
         }
         return trimmed.isEmpty ? "Android did not return an error message." : trimmed
+    }
+
+    private func isTransientToolTimeout(tool: ToolchainTool, reason: String) -> Bool {
+        tool == .adb && reason.localizedCaseInsensitiveContains("took too long")
+    }
+
+    private func presentTransientToolTimeout(_ reason: String) {
+        alert = UserAlert(
+            title: commandFailureTitle(for: reason),
+            message: commandFailureMessage(for: reason)
+        )
+        statusMessage = "The device did not respond in time."
     }
 
     private func scrcpyFailureMessage(for message: String) -> String {
@@ -7477,14 +8247,21 @@ public struct UserAlert: Identifiable {
     public let id = UUID()
     public let title: String
     public let message: String
+    public let onDismiss: (@MainActor () -> Void)?
 
-    public init(title: String, message: String) {
+    public init(
+        title: String,
+        message: String,
+        onDismiss: (@MainActor () -> Void)? = nil
+    ) {
         self.title = title
         self.message = message
+        self.onDismiss = onDismiss
     }
 
     public init(error: Error) {
         self.title = "Something went wrong"
         self.message = error.localizedDescription
+        self.onDismiss = nil
     }
 }

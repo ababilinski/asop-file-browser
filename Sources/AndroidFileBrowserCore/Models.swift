@@ -1139,7 +1139,7 @@ public enum AppColumn: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var label: String {
         switch self {
-        case .package: "Package"
+        case .package: "App"
         case .status: "Status"
         case .kind: "Type"
         case .enabled: "Enabled"
@@ -1176,6 +1176,8 @@ public struct AndroidPackage: Identifiable, Hashable, Codable, Sendable {
     public let apkPath: String?
     public var kind: AppKind
     public var isRunning: Bool = false
+    public var appLabel: String? = nil
+    public var iconPNGData: Data? = nil
     public var apkSizeBytes: Int64?
     public var enabled: Bool?
     public var versionName: String?
@@ -1189,12 +1191,46 @@ public struct AndroidPackage: Identifiable, Hashable, Codable, Sendable {
     var appStorageLocationSizes: [AppStorageLocation.Kind: Int64] = [:]
 
     public var displayName: String {
-        packageName
+        if let appLabel = appLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !appLabel.isEmpty {
+            return appLabel
+        }
+
+        let packageComponent = packageName
             .split(separator: ".")
             .last
-            .map(String.init)?
-            .replacingOccurrences(of: "_", with: " ")
+            .map(String.init)
             ?? packageName
+        let words = packageComponent
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+        guard !words.isEmpty else { return packageName }
+        return words.map { word in
+            let value = String(word)
+            guard value == value.lowercased() else { return value }
+            return value.prefix(1).uppercased() + value.dropFirst()
+        }
+        .joined(separator: " ")
+    }
+
+    var displayInitials: String {
+        let words = displayName.split { character in
+            !character.isLetter && !character.isNumber
+        }
+        if words.count >= 2 {
+            return words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        }
+        return String((words.first ?? Substring("?"))).prefix(2).uppercased()
+    }
+
+    var artworkPaletteIndex: Int {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in packageName.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Int(hash % 8)
     }
 
     var appStorageLocations: [AppStorageLocation] {
@@ -1625,12 +1661,30 @@ public struct ScreenRecordingOptions: Equatable, Sendable {
     }
 }
 
-public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
-    public let id: UUID
+public struct ScreenRecordingDeviceSession: Identifiable, Equatable, Sendable {
+    public var id: String { deviceSerial }
     public let deviceSerial: String
     public let deviceTitle: String
     public let startedAt: Date
+
+    public init(deviceSerial: String, deviceTitle: String, startedAt: Date) {
+        self.deviceSerial = deviceSerial
+        self.deviceTitle = deviceTitle
+        self.startedAt = startedAt
+    }
+}
+
+public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let devices: [ScreenRecordingDeviceSession]
     public let options: ScreenRecordingOptions
+
+    public var deviceSerial: String { devices.first?.deviceSerial ?? "" }
+    public var deviceSerials: [String] { devices.map(\.deviceSerial) }
+    public var deviceTitle: String {
+        devices.count == 1 ? (devices.first?.deviceTitle ?? "Device") : "\(devices.count) devices"
+    }
+    public var startedAt: Date { devices.map(\.startedAt).min() ?? Date() }
 
     public init(
         id: UUID = UUID(),
@@ -1640,9 +1694,21 @@ public struct ScreenRecordingSession: Identifiable, Equatable, Sendable {
         options: ScreenRecordingOptions
     ) {
         self.id = id
-        self.deviceSerial = deviceSerial
-        self.deviceTitle = deviceTitle
-        self.startedAt = startedAt
+        self.devices = [ScreenRecordingDeviceSession(
+            deviceSerial: deviceSerial,
+            deviceTitle: deviceTitle,
+            startedAt: startedAt
+        )]
+        self.options = options
+    }
+
+    public init(
+        id: UUID = UUID(),
+        devices: [ScreenRecordingDeviceSession],
+        options: ScreenRecordingOptions
+    ) {
+        self.id = id
+        self.devices = devices
         self.options = options
     }
 }
@@ -1660,6 +1726,74 @@ public struct ScrcpyWindowPlacement: Equatable, Sendable {
         self.width = width
         self.height = height
         self.alwaysOnTop = alwaysOnTop
+    }
+}
+
+public enum PhoneControlFrameRateLimit: Int, CaseIterable, Identifiable, Codable, Sendable {
+    case automatic = 0
+    case fps30 = 30
+    case fps60 = 60
+
+    public var id: Int { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .fps30: "30 fps"
+        case .fps60: "60 fps"
+        }
+    }
+}
+
+public enum PhoneControlVideoCodec: String, CaseIterable, Identifiable, Codable, Sendable {
+    case automatic
+    case h264
+    case h265
+    case av1
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .h264: "H.264"
+        case .h265: "H.265"
+        case .av1: "AV1"
+        }
+    }
+}
+
+public struct PhoneControlDeviceOptions: Equatable, Codable, Sendable {
+    public var wakesDeviceOnOpen: Bool
+    public var capturesAudio: Bool
+    public var acceptsInput: Bool
+    public var synchronizesClipboard: Bool
+    public var staysAwake: Bool
+    public var turnsDeviceScreenOff: Bool
+    public var alwaysOnTop: Bool
+    public var frameRateLimit: PhoneControlFrameRateLimit
+    public var videoCodec: PhoneControlVideoCodec
+
+    public init(
+        wakesDeviceOnOpen: Bool = false,
+        capturesAudio: Bool = true,
+        acceptsInput: Bool = true,
+        synchronizesClipboard: Bool = true,
+        staysAwake: Bool = false,
+        turnsDeviceScreenOff: Bool = false,
+        alwaysOnTop: Bool = true,
+        frameRateLimit: PhoneControlFrameRateLimit = .automatic,
+        videoCodec: PhoneControlVideoCodec = .automatic
+    ) {
+        self.wakesDeviceOnOpen = wakesDeviceOnOpen
+        self.capturesAudio = capturesAudio
+        self.acceptsInput = acceptsInput
+        self.synchronizesClipboard = synchronizesClipboard
+        self.staysAwake = staysAwake
+        self.turnsDeviceScreenOff = turnsDeviceScreenOff
+        self.alwaysOnTop = alwaysOnTop
+        self.frameRateLimit = frameRateLimit
+        self.videoCodec = videoCodec
     }
 }
 
@@ -1683,6 +1817,49 @@ public struct PhoneControlSession: Identifiable, Equatable, Sendable {
         self.processIdentifier = processIdentifier
         self.startedAt = startedAt
     }
+}
+
+public struct PhoneControlCapabilities: Equatable, Sendable {
+    public let supportsKeyEvents: Bool
+    public let supportsRotation: Bool
+    public let supportsScreenshots: Bool
+    public let supportsScreenRecording: Bool
+    public let supportsBatteryStatus: Bool
+
+    public init(
+        supportsKeyEvents: Bool,
+        supportsRotation: Bool,
+        supportsScreenshots: Bool,
+        supportsScreenRecording: Bool,
+        supportsBatteryStatus: Bool
+    ) {
+        self.supportsKeyEvents = supportsKeyEvents
+        self.supportsRotation = supportsRotation
+        self.supportsScreenshots = supportsScreenshots
+        self.supportsScreenRecording = supportsScreenRecording
+        self.supportsBatteryStatus = supportsBatteryStatus
+    }
+
+    static func detected(fromProbeOutput output: String) -> PhoneControlCapabilities {
+        let commands = Set(
+            output
+                .split(whereSeparator: \Character.isWhitespace)
+                .map { $0.lowercased() }
+        )
+        return PhoneControlCapabilities(
+            supportsKeyEvents: commands.contains("input"),
+            supportsRotation: commands.contains("settings"),
+            supportsScreenshots: commands.contains("screencap"),
+            supportsScreenRecording: commands.contains("screenrecord"),
+            supportsBatteryStatus: commands.contains("dumpsys")
+        )
+    }
+}
+
+public enum PhoneControlCapabilityState: Equatable, Sendable {
+    case checking
+    case available(PhoneControlCapabilities)
+    case unavailable
 }
 
 struct ArchiveCreationRequest: Identifiable, Hashable, Sendable {

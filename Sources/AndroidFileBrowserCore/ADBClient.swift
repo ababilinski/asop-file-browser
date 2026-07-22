@@ -64,9 +64,7 @@ public final class ADBScreenRecordingProcess: @unchecked Sendable {
     private let process: Process
     private let logHandle: FileHandle
     private let closeLock = NSLock()
-    private let waitLock = NSLock()
     private var didCloseLog = false
-    private var cachedTerminationStatus: Int32?
 
     init(serial: String, remotePath: String, startedAt: Date, logURL: URL, process: Process, logHandle: FileHandle) {
         self.serial = serial
@@ -95,19 +93,33 @@ public final class ADBScreenRecordingProcess: @unchecked Sendable {
         process.terminate()
     }
 
-    public func waitUntilExit() -> Int32 {
-        waitLock.lock()
-        if let cachedTerminationStatus {
-            waitLock.unlock()
-            return cachedTerminationStatus
+    public func waitUntilExit(timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(max(timeout, 0))
+        while process.isRunning,
+              Self.isProcessAlive(process.processIdentifier),
+              Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
         }
-        process.waitUntilExit()
-        let terminationStatus = process.terminationStatus
-        cachedTerminationStatus = terminationStatus
-        waitLock.unlock()
 
+        if process.isRunning, Self.isProcessAlive(process.processIdentifier) {
+            process.terminate()
+            let terminationDeadline = Date().addingTimeInterval(1)
+            while process.isRunning,
+                  Self.isProcessAlive(process.processIdentifier),
+                  Date() < terminationDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        let exited = !process.isRunning || !Self.isProcessAlive(process.processIdentifier)
         closeLog()
-        return terminationStatus
+        return exited
+    }
+
+    private static func isProcessAlive(_ processIdentifier: Int32) -> Bool {
+        guard processIdentifier > 0 else { return false }
+        if Darwin.kill(pid_t(processIdentifier), 0) == 0 { return true }
+        return errno != ESRCH
     }
 
     private func closeLog() {
@@ -818,6 +830,10 @@ public actor ADBClient {
         self.runner = runner
     }
 
+    public func resolvedExecutableURL() async throws -> URL {
+        try await workingADBURL()
+    }
+
     public func run(
         _ arguments: [String],
         allowFailure: Bool = false,
@@ -840,7 +856,7 @@ public actor ADBClient {
             throw CancellationError()
         } catch is ADBCommandTimedOut {
             clearCachedADBResolution()
-            throw FileOperationError.toolUnavailable(.adb, "ADB took too long to respond.")
+            throw FileOperationError.commandFailed("ADB took too long to respond.")
         } catch {
             clearCachedADBResolution()
             throw FileOperationError.toolUnavailable(.adb, "macOS could not open the selected copy.")
@@ -938,34 +954,21 @@ public actor ADBClient {
 
     public func launchScrcpy(
         serial: String,
+        windowTitle: String = "ASOP File Browser Phone Control",
         options: ScreenRecordingOptions = ScreenRecordingOptions(),
+        deviceOptions: PhoneControlDeviceOptions = PhoneControlDeviceOptions(),
         placement: ScrcpyWindowPlacement? = nil
     ) async throws -> DetachedLaunchObservation {
         let adbURL = try await workingADBURL()
         let scrcpyCandidates = try locator.resolutionCandidates(for: .scrcpy)
 
-        var arguments = ["--serial", serial, "--window-title", "ASOP File Browser Phone Control"]
-        if options.showTouches {
-            arguments.append("--show-touches")
-        }
-        if let maxSize = options.scrcpyMaxSize {
-            arguments.append(contentsOf: ["--max-size", "\(maxSize)"])
-        }
-        arguments.append(contentsOf: ["--video-bit-rate", "\(options.effectiveVideoBitRateMbps)M"])
-        if let packageName = options.normalizedPackageName {
-            arguments.append(contentsOf: ["--start-app", packageName])
-        }
-        if let placement {
-            arguments.append(contentsOf: [
-                "--window-x", "\(placement.x)",
-                "--window-y", "\(placement.y)",
-                "--window-width", "\(placement.width)",
-                "--window-height", "\(placement.height)"
-            ])
-            if placement.alwaysOnTop {
-                arguments.append("--always-on-top")
-            }
-        }
+        let arguments = Self.scrcpyArguments(
+            serial: serial,
+            windowTitle: windowTitle,
+            options: options,
+            deviceOptions: deviceOptions,
+            placement: placement
+        )
 
         for candidate in scrcpyCandidates {
             guard let serverURL = locator.scrcpyServerURL(for: candidate) else { continue }
@@ -996,6 +999,62 @@ public actor ADBClient {
             return observation
         }
         throw FileOperationError.toolUnavailable(.scrcpy, "Phone Control is incomplete or cannot run on this Mac.")
+    }
+
+    nonisolated static func scrcpyArguments(
+        serial: String,
+        windowTitle: String,
+        options: ScreenRecordingOptions,
+        deviceOptions: PhoneControlDeviceOptions = PhoneControlDeviceOptions(),
+        placement: ScrcpyWindowPlacement?
+    ) -> [String] {
+        var arguments = ["--serial", serial, "--window-title", windowTitle]
+        if options.showTouches {
+            arguments.append("--show-touches")
+        }
+        if !deviceOptions.wakesDeviceOnOpen {
+            arguments.append("--no-power-on")
+        }
+        if !deviceOptions.capturesAudio {
+            arguments.append("--no-audio")
+        }
+        if !deviceOptions.acceptsInput {
+            arguments.append("--no-control")
+        }
+        if !deviceOptions.synchronizesClipboard {
+            arguments.append("--no-clipboard-autosync")
+        }
+        if deviceOptions.staysAwake {
+            arguments.append("--stay-awake")
+        }
+        if deviceOptions.turnsDeviceScreenOff {
+            arguments.append("--turn-screen-off")
+        }
+        if deviceOptions.frameRateLimit != .automatic {
+            arguments.append(contentsOf: ["--max-fps", "\(deviceOptions.frameRateLimit.rawValue)"])
+        }
+        if deviceOptions.videoCodec != .automatic {
+            arguments.append(contentsOf: ["--video-codec", deviceOptions.videoCodec.rawValue])
+        }
+        if let maxSize = options.scrcpyMaxSize {
+            arguments.append(contentsOf: ["--max-size", "\(maxSize)"])
+        }
+        arguments.append(contentsOf: ["--video-bit-rate", "\(options.effectiveVideoBitRateMbps)M"])
+        if let packageName = options.normalizedPackageName {
+            arguments.append(contentsOf: ["--start-app", packageName])
+        }
+        if let placement {
+            arguments.append(contentsOf: [
+                "--window-x", "\(placement.x)",
+                "--window-y", "\(placement.y)",
+                "--window-width", "\(placement.width)",
+                "--window-height", "\(placement.height)"
+            ])
+            if placement.alwaysOnTop {
+                arguments.append("--always-on-top")
+            }
+        }
+        return arguments
     }
 
     public func startScreenRecording(

@@ -566,34 +566,7 @@ private struct PackageIconView: View {
     let usesFinderColors: Bool
 
     var body: some View {
-        ZStack {
-            if usesFinderColors {
-                Text(package.displayName.prefix(2).uppercased())
-                    .font(.system(size: size * 0.34, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-            } else {
-                Image(systemName: package.kind == .user ? "app.fill" : "gearshape.2.fill")
-                    .font(.system(size: size * 0.52, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.primary)
-            }
-        }
-        .frame(width: size, height: size)
-        .background(backgroundGradient)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .liquidGlassPanel(in: RoundedRectangle(cornerRadius: 14, style: .continuous), fallbackMaterial: .regularMaterial)
-    }
-
-    private var backgroundGradient: LinearGradient {
-        LinearGradient(
-            colors: usesFinderColors ? accentColors : [.clear, .clear],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var accentColors: [Color] {
-        package.kind == .user ? [.blue, .teal] : [.secondary, .gray]
+        PackageArtwork(package: package, size: size, usesFinderColors: usesFinderColors)
     }
 }
 

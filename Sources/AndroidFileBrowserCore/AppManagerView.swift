@@ -45,11 +45,12 @@ struct AppManagerView: View {
                 Button {
                     model.showAPKImporter = true
                 } label: {
-                    Label("Install APK", systemImage: "plus.app")
+                    Label("Install Package…", systemImage: "plus.app")
                 }
-                .help("Install APK: choose an APK on this Mac and install it on the Android device.")
-                .accessibilityLabel("Install APK")
-                .accessibilityHint("Choose an APK file on this Mac and install it on the Android device.")
+                .disabled(model.isAppPackageInstallInProgress)
+                .help("Install Package: choose an APK, XAPK, APKS, or split ZIP on this Mac.")
+                .accessibilityLabel("Install App Package")
+                .accessibilityHint("Choose an Android app package on this Mac and install it on the Android device.")
             }
             .padding(14)
 
@@ -64,6 +65,127 @@ struct AppManagerView: View {
                 }
             }
         }
+    }
+}
+
+struct AppPackageDropOverlay: View {
+    let deviceName: String?
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.accentColor.opacity(0.1))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                }
+                .padding(22)
+
+            VStack(spacing: 14) {
+                Image(systemName: "arrow.down.app.fill")
+                    .font(.system(size: 46, weight: .medium))
+                    .foregroundStyle(.tint)
+                    .symbolEffect(.bounce, options: .repeat(2))
+
+                Text(deviceName.map { "Install on \($0)" } ?? "Install App Package")
+                    .font(.title2.weight(.semibold))
+
+                Text(deviceName == nil
+                    ? "Release to open Developer Options connection guidance."
+                    : "Release to install this app on the selected Android device.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Text("APK  •  XAPK  •  APKS  •  Split ZIP")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.quaternary, in: Capsule())
+            }
+            .multilineTextAlignment(.center)
+            .padding(44)
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Release to install the Android app package")
+    }
+}
+
+struct AppInstallRecoverySheet: View {
+    @ObservedObject var model: AppModel
+    let request: AppInstallRecoveryRequest
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Image(systemName: symbolName)
+                .font(.system(size: 42, weight: .medium))
+                .foregroundStyle(symbolColor)
+
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button("Cancel") {
+                    model.pendingAppInstallRecovery = nil
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                if request.conflict.kind == .newerVersionInstalled {
+                    Button("Try Downgrade") {
+                        Task { await model.retryPendingAppInstallAllowingDowngrade() }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                } else if request.conflict.packageName != nil {
+                    Button("Remove Existing App & Install", role: .destructive) {
+                        Task { await model.replacePendingAppInstall() }
+                    }
+                }
+            }
+        }
+        .padding(28)
+        .frame(width: 470)
+    }
+
+    private var title: String {
+        switch request.conflict.kind {
+        case .newerVersionInstalled: "A Newer Version Is Already Installed"
+        case .differentSignature: "App Signed Differently"
+        }
+    }
+
+    private var message: String {
+        switch request.conflict.kind {
+        case .newerVersionInstalled:
+            "\(request.displayName) is older than the copy\(deviceSuffix). You can ask Android to allow the downgrade, but some release apps and newer Android versions still prevent it."
+        case .differentSignature:
+            "The installed copy\(deviceSuffix) and \(request.displayName) were signed by different developers or keys. Android cannot update it in place. Removing the existing app will permanently erase that app’s local data."
+        }
+    }
+
+    private var deviceSuffix: String {
+        request.deviceName.map { " on \($0)" } ?? " on the device"
+    }
+
+    private var symbolName: String {
+        request.conflict.kind == .newerVersionInstalled ? "arrow.down.app" : "checkmark.shield.trianglebadge.exclamationmark"
+    }
+
+    private var symbolColor: Color {
+        request.conflict.kind == .newerVersionInstalled ? .accentColor : .orange
     }
 }
 
@@ -110,40 +232,43 @@ struct AppPackageList: View {
                 availableWidth: proxy.size.width,
                 preferredWidths: columnWidths
             )
-            VStack(spacing: 0) {
-                AppPackageHeader(
-                    model: model,
-                    columns: layout.columns,
-                    layout: layout
-                ) { column, translation in
-                    resizeColumn(column, translation: translation, layout: layout)
-                } onResizeEnded: {
-                    resizeStartWidths = nil
-                }
-                Divider()
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.filteredPackages) { package in
-                            AppPackageRow(
-                                model: model,
-                                package: package,
-                                columns: layout.columns,
-                                layout: layout,
-                                showsStorageDisclosure: showsStorageDisclosure
-                            )
-                            if showsStorageDisclosure && model.expandedStorageAppPackageIDs.contains(package.id) {
-                                StorageAppPackageExpansionView(model: model, package: package)
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    AppPackageHeader(
+                        model: model,
+                        columns: layout.columns,
+                        layout: layout
+                    ) { column, translation in
+                        resizeColumn(column, translation: translation, layout: layout)
+                    } onResizeEnded: {
+                        resizeStartWidths = nil
+                    }
+                    Divider()
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(model.filteredPackages) { package in
+                                AppPackageRow(
+                                    model: model,
+                                    package: package,
+                                    columns: layout.columns,
+                                    layout: layout,
+                                    showsStorageDisclosure: showsStorageDisclosure
+                                )
+                                if showsStorageDisclosure && model.expandedStorageAppPackageIDs.contains(package.id) {
+                                    StorageAppPackageExpansionView(model: model, package: package)
+                                        .padding(.leading, 44)
+                                        .padding(.trailing, 12)
+                                        .padding(.vertical, 8)
+                                }
+                                Divider()
                                     .padding(.leading, 44)
-                                    .padding(.trailing, 12)
-                                    .padding(.vertical, 8)
                             }
-                            Divider()
-                                .padding(.leading, 44)
                         }
                     }
                 }
+                .frame(width: layout.totalWidth, height: proxy.size.height, alignment: .topLeading)
             }
-            .frame(width: proxy.size.width, alignment: .leading)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
         }
     }
 
@@ -374,9 +499,8 @@ enum AppColumnMetrics {
                     widths[column] = max(minimumWidth(for: column), width - shrink * availableShrink / capacity)
                 }
             } else {
-                let scale = targetWidth / max(1, currentTotal)
                 for column in columns {
-                    widths[column, default: column.idealWidth] *= scale
+                    widths[column] = minimumWidth(for: column)
                 }
             }
         }
@@ -387,7 +511,7 @@ enum AppColumnMetrics {
 
     static func minimumWidth(for column: AppColumn) -> CGFloat {
         switch column {
-        case .package: 220
+        case .package: 300
         case .status: 82
         case .kind: 64
         case .enabled: 74
@@ -413,6 +537,7 @@ struct AppPackageHeaderCell: View {
         HStack(spacing: 6) {
             Text(column.label)
                 .font(.caption.weight(.semibold))
+                .lineLimit(1)
             if let sortIndicator = model.appSortIndicator(for: column) {
                 Image(systemName: sortIndicator.ascending ? "chevron.up" : "chevron.down")
                     .font(.caption2.weight(.semibold))
@@ -479,10 +604,11 @@ struct AppPackageRow: View {
                     column: column,
                     showsStorageDisclosure: showsStorageDisclosure
                 )
-                    .frame(width: layout.width(for: column), alignment: .leading)
+                    .frame(width: layout.width(for: column), height: 54, alignment: .leading)
+                    .clipped()
             }
         }
-        .frame(height: 42)
+        .frame(width: layout.totalWidth, height: 54, alignment: .leading)
         .background(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
@@ -505,7 +631,7 @@ struct AppPackageCell: View {
         Group {
             switch column {
             case .package:
-                HStack {
+                HStack(spacing: 9) {
                     if showsStorageDisclosure {
                         Button {
                             Task { await model.toggleStorageAppExpansion(package: package) }
@@ -520,16 +646,20 @@ struct AppPackageCell: View {
                     }
                     PackageBadge(package: package, usesFinderColors: model.settings.useFinderStyleIconColors)
                     VStack(alignment: .leading, spacing: 2) {
+                        Text(package.displayName)
+                            .font(.body.weight(.medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(package.packageName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        if let version = package.versionName {
-                            Text(version)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(package.versionName.map { "\(package.packageName) · Version \($0)" } ?? package.packageName)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             case .status:
                 HStack(spacing: 6) {
                     if package.isRunning {
@@ -541,16 +671,20 @@ struct AppPackageCell: View {
                 }
                 .font(.caption.weight(package.isRunning ? .semibold : .regular))
                 .foregroundStyle(package.isRunning ? Color.green : Color.secondary)
+                .lineLimit(1)
             case .kind:
                 Text(package.kind.label)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             case .enabled:
-                Text(package.enabled.map { $0 ? "Yes" : "No" } ?? "Unknown")
+                Text(package.enabled.map { $0 ? "Yes" : "No" } ?? "—")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             case .size:
                 Text(package.displayTotalSize)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .lineLimit(1)
             case .apk:
                 Text(package.apkPath ?? "—")
                     .foregroundStyle(.secondary)
@@ -559,6 +693,7 @@ struct AppPackageCell: View {
             }
         }
         .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
 
@@ -793,27 +928,8 @@ struct PackageBadge: View {
     let usesFinderColors: Bool
 
     var body: some View {
-        ZStack {
-            Image(systemName: package.kind == .user ? "app.fill" : "gearshape.2.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(usesFinderColors ? .white : .primary)
-        }
-        .frame(width: 24, height: 24)
-        .background(backgroundGradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
-    private var backgroundGradient: LinearGradient {
-        LinearGradient(
-            colors: usesFinderColors ? accentColors : [.clear, .clear],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var accentColors: [Color] {
-        package.kind == .user ? [.blue, .teal] : [.secondary, .gray]
+        PackageArtwork(package: package, size: 30, usesFinderColors: usesFinderColors)
+            .fixedSize()
     }
 }
 

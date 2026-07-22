@@ -66,8 +66,10 @@ With Developer Options and USB or Wi-Fi debugging, you can:
 
 - Search everywhere instead of just the current folder.
 - See a detailed breakdown of your device storage.
-- Install, remove, open, stop, or clear apps.
-- Take screenshots, record the screen, or control the phone from your Mac.
+- Drag APK, XAPK, APKS, and split ZIP packages from Finder to install them. Dropping several APKs opens an editable install queue in the Progress panel, with per-app errors for downgrade and signature conflicts.
+- Remove, open, stop, or clear apps.
+- Capture one display or combine multiple displays side by side in one screenshot or recording.
+- Open more than one connected device at a time. Each device gets its own screen and control bar.
 
 [See all Phone Tools](https://ababilinski.github.io/asop-file-browser/phone-tools/)
 

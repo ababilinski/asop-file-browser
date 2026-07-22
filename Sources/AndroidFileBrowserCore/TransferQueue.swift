@@ -7,6 +7,7 @@ public enum TransferJobKind: String, Codable, CaseIterable, Identifiable, Sendab
     case preview
     case paste
     case appBackup
+    case appInstall
     case export
     case other
 
@@ -20,6 +21,7 @@ public enum TransferJobKind: String, Codable, CaseIterable, Identifiable, Sendab
         case .preview: "Preview"
         case .paste: "Paste"
         case .appBackup: "APK Backup"
+        case .appInstall: "App Install"
         case .export: "Export"
         case .other: "Transfer"
         }
@@ -33,6 +35,7 @@ public enum TransferJobKind: String, Codable, CaseIterable, Identifiable, Sendab
         case .preview: "eye"
         case .paste: "doc.on.clipboard"
         case .appBackup: "app.badge"
+        case .appInstall: "arrow.down.app"
         case .export: "arrow.up.doc"
         case .other: "arrow.left.arrow.right"
         }
@@ -463,6 +466,50 @@ public final class TransferQueue: ObservableObject {
     public func cancelSelected() {
         guard let selectedJobID else { return }
         cancel(jobID: selectedJobID)
+    }
+
+    public func canMoveQueuedJob(_ jobID: UUID, earlier: Bool) -> Bool {
+        guard let job = jobs.first(where: { $0.id == jobID }),
+              job.state == .queued,
+              !job.isAggregate else { return false }
+        let siblingIDs = jobs.filter {
+            $0.parentID == job.parentID && $0.state == .queued && !$0.isAggregate
+        }.map(\.id)
+        guard let position = siblingIDs.firstIndex(of: jobID) else { return false }
+        return earlier ? position > siblingIDs.startIndex : position < siblingIDs.index(before: siblingIDs.endIndex)
+    }
+
+    @discardableResult
+    public func moveQueuedJob(_ jobID: UUID, earlier: Bool) -> Bool {
+        guard canMoveQueuedJob(jobID, earlier: earlier),
+              let sourceIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return false }
+        let siblingIDs = jobs.filter {
+            $0.parentID == jobs[sourceIndex].parentID && $0.state == .queued && !$0.isAggregate
+        }.map(\.id)
+        guard let position = siblingIDs.firstIndex(of: jobID) else { return false }
+        let targetID = siblingIDs[earlier ? siblingIDs.index(before: position) : siblingIDs.index(after: position)]
+        guard let targetIndex = jobs.firstIndex(where: { $0.id == targetID }) else { return false }
+        jobs.swapAt(sourceIndex, targetIndex)
+        return true
+    }
+
+    @discardableResult
+    public func removeQueuedJob(_ jobID: UUID) -> Bool {
+        guard let index = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[index].state == .queued,
+              !jobs[index].isAggregate else { return false }
+        operations[jobID] = nil
+        continuations.removeValue(forKey: jobID)?.resume(returning: .failure(TransferCancellationError()))
+        tasks[jobID] = nil
+        deferredPresentationJobIDs.remove(jobID)
+        expandedJobIDs.remove(jobID)
+        if selectedJobID == jobID {
+            selectedJobID = nil
+        }
+        jobs.remove(at: index)
+        refreshAggregateJobs()
+        startRunnableJobs()
+        return true
     }
 
     public func retry(jobID: UUID) {

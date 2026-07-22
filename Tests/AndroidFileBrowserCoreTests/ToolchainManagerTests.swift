@@ -236,6 +236,20 @@ final class ToolchainManagerTests: XCTestCase {
         }
     }
 
+    func testADBCommandTimeoutIsAnOperationFailureNotAMissingTool() async throws {
+        let locator = ToolchainLocator(adbOverride: URL(fileURLWithPath: "/tmp/test-adb"))
+        let client = ADBClient(locator: locator, runner: VersionThenSlowRunProcessRunner())
+
+        do {
+            _ = try await client.run(["-s", "device", "shell", "input keyevent 3"], timeout: 0.01)
+            XCTFail("Expected the command to time out")
+        } catch FileOperationError.commandFailed(let message) {
+            XCTAssertEqual(message, "ADB took too long to respond.")
+        } catch {
+            XCTFail("Expected commandFailed, received \(error)")
+        }
+    }
+
     func testReplacingADBAtSamePathBypassesRecentFailureCache() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -431,6 +445,41 @@ private struct VersionThenFixedRunProcessRunner: ProcessRunning {
             )
         }
         return result
+    }
+
+    func runStreaming(
+        executable: URL,
+        arguments: [String],
+        output: @escaping @Sendable (Data) -> Void
+    ) async throws -> ADBCommandResult {
+        throw StubProcessError.unexpectedCall
+    }
+
+    func launchDetached(executable: URL, arguments: [String]) async throws {
+        throw StubProcessError.unexpectedCall
+    }
+
+    func launchObserved(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        observationDuration: TimeInterval
+    ) async throws -> DetachedLaunchObservation {
+        throw StubProcessError.unexpectedCall
+    }
+}
+
+private struct VersionThenSlowRunProcessRunner: ProcessRunning {
+    func run(executable: URL, arguments: [String]) async throws -> ADBCommandResult {
+        if arguments == ["version"] {
+            return ADBCommandResult(
+                stdoutData: Data("Android Debug Bridge version 1.0.41\nVersion 37.0.0-test\n".utf8),
+                stderrData: Data(),
+                exitCode: 0
+            )
+        }
+        try await Task.sleep(for: .seconds(1))
+        return ADBCommandResult(stdoutData: Data(), stderrData: Data(), exitCode: 0)
     }
 
     func runStreaming(

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct LocalFileDropTarget: NSViewRepresentable {
     let isEnabled: Bool
+    let acceptsDrop: ([URL]) -> Bool
     let setTargeted: (Bool) -> Void
     let onDrop: ([URL]) -> Void
 
@@ -13,6 +14,7 @@ struct LocalFileDropTarget: NSViewRepresentable {
     func updateNSView(_ nsView: LocalFileDropTargetView, context: Context) {
         nsView.configuration = LocalFileDropTargetConfiguration(
             isEnabled: isEnabled,
+            acceptsDrop: acceptsDrop,
             setTargeted: setTargeted,
             onDrop: onDrop
         )
@@ -22,12 +24,14 @@ struct LocalFileDropTarget: NSViewRepresentable {
 extension View {
     func localFileDropTarget(
         isEnabled: Bool = true,
+        acceptsDrop: @escaping ([URL]) -> Bool = { _ in true },
         setTargeted: @escaping (Bool) -> Void,
         onDrop: @escaping ([URL]) -> Void
     ) -> some View {
         overlay {
             LocalFileDropTarget(
                 isEnabled: isEnabled,
+                acceptsDrop: acceptsDrop,
                 setTargeted: setTargeted,
                 onDrop: onDrop
             )
@@ -38,6 +42,7 @@ extension View {
 
 fileprivate struct LocalFileDropTargetConfiguration {
     var isEnabled = true
+    var acceptsDrop: ([URL]) -> Bool = { _ in true }
     var setTargeted: (Bool) -> Void = { _ in }
     var onDrop: ([URL]) -> Void = { _ in }
 }
@@ -60,7 +65,8 @@ final class LocalFileDropTargetView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard configuration.isEnabled, !localFileURLs(from: sender.draggingPasteboard).isEmpty else {
+        let urls = localFileURLs(from: sender.draggingPasteboard)
+        guard configuration.isEnabled, !urls.isEmpty, configuration.acceptsDrop(urls) else {
             return []
         }
         configuration.setTargeted(true)
@@ -68,7 +74,8 @@ final class LocalFileDropTargetView: NSView {
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard configuration.isEnabled, !localFileURLs(from: sender.draggingPasteboard).isEmpty else {
+        let urls = localFileURLs(from: sender.draggingPasteboard)
+        guard configuration.isEnabled, !urls.isEmpty, configuration.acceptsDrop(urls) else {
             return []
         }
         return .copy
@@ -84,7 +91,7 @@ final class LocalFileDropTargetView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = localFileURLs(from: sender.draggingPasteboard)
-        guard configuration.isEnabled, !urls.isEmpty else { return false }
+        guard configuration.isEnabled, !urls.isEmpty, configuration.acceptsDrop(urls) else { return false }
         configuration.setTargeted(false)
         configuration.onDrop(urls)
         return true
