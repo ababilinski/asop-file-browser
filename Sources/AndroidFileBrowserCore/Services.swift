@@ -820,9 +820,11 @@ public actor AndroidFileRepository {
 
 public actor AppManagerService {
     private let adb: ADBClient
+    private let metadataBridge: AppMetadataBridge
 
     public init(adb: ADBClient) {
         self.adb = adb
+        self.metadataBridge = AppMetadataBridge(adb: adb)
     }
 
     public func packages(device: AndroidDevice, kind: AppKind) async throws -> [AndroidPackage] {
@@ -859,6 +861,13 @@ public actor AppManagerService {
             return String(trimmed[..<separator])
         })
         return packageNames.isEmpty ? nil : packageNames
+    }
+
+    func presentations(
+        device: AndroidDevice,
+        packages: [AndroidPackage]
+    ) async throws -> [String: AndroidAppPresentation] {
+        try await metadataBridge.presentations(device: device, packages: packages)
     }
 
     public func details(device: AndroidDevice, package: AndroidPackage) async throws -> AndroidPackage {

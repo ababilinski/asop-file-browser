@@ -6778,6 +6778,27 @@ public final class AppModel: ObservableObject {
         visiblePackages = markRunning(visiblePackages, processNames: processNames)
         applyLoadedPackages(visiblePackages)
 
+        do {
+            let presentations = try await appManager.presentations(
+                device: device,
+                packages: visiblePackages
+            )
+            try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
+            visiblePackages = visiblePackages.map { package in
+                guard let presentation = presentations[package.packageName] else { return package }
+                var presentedPackage = package
+                presentedPackage.appLabel = presentation.label
+                presentedPackage.iconPNGData = presentation.iconPNGData
+                return presentedPackage
+            }
+            applyLoadedPackages(visiblePackages)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Package names and deterministic artwork remain available when a
+            // device cannot provide richer launcher metadata.
+        }
+
         for package in visiblePackages {
             try validatePackageLoad(device: device, kind: requestedKind, revision: loadRevision)
             let enrichedPackage: AndroidPackage
