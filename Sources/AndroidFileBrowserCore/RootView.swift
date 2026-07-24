@@ -39,6 +39,7 @@ public struct RootView: View {
         .toolbar {
             AppToolbar(model: model)
         }
+        .compatibleToolbarRemovingSidebarToggle()
         .overlay(alignment: .topTrailing) {
             PhoneCapturePopoverHost(model: model)
                 .padding(.top, 8)
@@ -115,6 +116,11 @@ public struct RootView: View {
         }
         .sheet(item: $model.pendingAppInstallRecovery) { request in
             AppInstallRecoverySheet(model: model, request: request)
+        }
+        .sheet(item: $model.wirelessADBSetupPresentation, onDismiss: {
+            model.wirelessADBSetupSheetDidDismiss()
+        }) { presentation in
+            WirelessADBSetupSheet(model: model, deviceID: presentation.deviceID)
         }
         .sheet(item: $model.adbQRPairingSession, onDismiss: {
             model.adbQRPairingSheetDidDismiss()
@@ -401,66 +407,38 @@ private struct SidebarView: View {
     var body: some View {
         List(selection: sidebarSelectionBinding) {
             Section("Devices") {
+                ConnectionModeMenu(model: model)
+
                 if showsUSBTransferDevices {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ConnectionModeMenu(model: model)
-
-                        Picker("Phone", selection: Binding(
-                            get: { usbTransferManager.selectedDeviceID },
-                            set: { usbTransferManager.selectDevice(id: $0) }
-                        )) {
-                            ForEach(usbTransferManager.devices) { device in
-                                Text(device.name).tag(Optional(device.id))
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
-                    }
-
                     ForEach(usbTransferManager.devices) { device in
-                        USBTransferDeviceRow(device: device)
+                        USBTransferDeviceRow(
+                            device: device,
+                            isSelected: usbTransferManager.selectedDeviceID == device.id,
+                            onSelect: { usbTransferManager.selectDevice(id: device.id) }
+                        )
                     }
                 } else if isUSBTransferStatusMode {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ConnectionModeMenu(model: model)
-
-                        Text(usbTransferStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+                    Label(usbTransferStatus, systemImage: "iphone.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else if model.devices.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ConnectionModeMenu(model: model)
-
-                        Label(disconnectedSidebarTitle, systemImage: "iphone.slash")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Label(disconnectedSidebarTitle, systemImage: "iphone.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ConnectionModeMenu(model: model)
-
-                        Picker("Device", selection: Binding(
-                            get: { model.selectedDeviceID },
-                            set: { model.selectADBDevice(id: $0) }
-                        )) {
-                            if model.selectedDeviceID == nil {
-                                Text("No connected device").tag(Optional<String>.none)
-                            }
-                            ForEach(model.devices) { device in
-                                Text(device.title).tag(Optional(device.id))
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
-                        .disabled(!model.canSwitchADBDevice)
-                    }
-
                     ForEach(model.devices) { device in
-                        DeviceRow(device: device, batteryStatus: model.batteryStatuses[device.id])
+                        DeviceRow(
+                            model: model,
+                            device: device,
+                            batteryStatus: model.batteryStatuses[device.id],
+                            wirelessSetupState: model.wirelessADBSetupStates[device.id],
+                            isSelected: model.selectedDeviceID == device.id
+                        )
                     }
                 }
+
+                Divider()
+                    .padding(.vertical, 2)
             }
 
             if showsStorageUsage {
@@ -905,20 +883,26 @@ private struct MTPQuickAccessRow: View {
 }
 
 private struct DeviceRow: View {
+    @ObservedObject var model: AppModel
     let device: AndroidDevice
     let batteryStatus: BatteryStatus?
+    let wirelessSetupState: ADBWirelessSetupState?
+    let isSelected: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: device.state == .device ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(device.state == .device ? adaptiveSuccessColor : adaptiveWarningColor)
+        HStack(spacing: 8) {
+            Image(systemName: "iphone")
+                .frame(width: 18)
+                .foregroundStyle(device.state == .device ? .primary : adaptiveWarningColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.title)
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
                 HStack(spacing: 4) {
-                    Text(device.state.displayName)
-                    if let batteryStatus {
+                    Text(connectionDetail)
+                        .lineLimit(1)
+                    if let batteryStatus, wirelessSetupState == nil {
                         Text("·")
                             .foregroundStyle(.tertiary)
                         BatteryStatusBadge(status: batteryStatus)
@@ -927,8 +911,84 @@ private struct DeviceRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            Spacer(minLength: 4)
+            connectionAccessory
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(colorScheme == .dark ? 0.22 : 0.14))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard model.canSwitchADBDevice else { return }
+            model.selectADBDevice(id: device.id)
         }
         .help(device.subtitle)
+        .contextMenu {
+            if device.connectionKind == .usb, device.state == .device {
+                Button {
+                    model.requestWirelessADBSetup(for: device.id)
+                } label: {
+                    Label("Connect via Wi-Fi…", systemImage: "wifi")
+                }
+            } else if device.connectionKind == .wifi {
+                Label("Connected via Wi-Fi", systemImage: "wifi")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(device.title), \(connectionDetail)")
+    }
+
+    private var connectionDetail: String {
+        if let wirelessSetupState {
+            return wirelessSetupState.detail
+        }
+        return "\(device.connectionKind.label) · \(device.state.displayName)"
+    }
+
+    @ViewBuilder
+    private var connectionAccessory: some View {
+        switch wirelessSetupState {
+        case .preparing:
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 24, height: 24)
+                .help("Preparing ADB over Wi-Fi")
+        case .ready:
+            Image(systemName: "wifi")
+                .foregroundStyle(adaptiveSuccessColor)
+                .frame(width: 24, height: 24)
+                .help("Connected over Wi-Fi. You can unplug the cable.")
+        case .failed(let message):
+            Button {
+                model.requestWirelessADBSetup(for: device.id)
+            } label: {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(adaptiveWarningColor)
+            .help("Wi-Fi setup failed: \(message) Select to try again.")
+            .accessibilityLabel("Retry Wi-Fi setup")
+        case nil where device.connectionKind == .usb && device.state == .device:
+            Button {
+                model.requestWirelessADBSetup(for: device.id)
+            } label: {
+                Image(systemName: device.connectionKind.symbol)
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 24, height: 24)
+            .help("Switch this USB debugging connection to Wi-Fi")
+            .accessibilityLabel("Switch \(device.title) to ADB over Wi-Fi")
+        case nil:
+            Image(systemName: device.connectionKind.symbol)
+                .foregroundStyle(device.state == .device ? Color.secondary : adaptiveWarningColor)
+                .frame(width: 24, height: 24)
+                .help("\(device.connectionKind.label) connection")
+        }
     }
 
     private var adaptiveSuccessColor: Color {
@@ -953,8 +1013,6 @@ private struct BatteryStatusBadge: View {
             }
             Text("\(status.levelPercent)%")
                 .monospacedDigit()
-            Text(status.statusLabel)
-                .fontWeight(status.isCharging ? .semibold : .regular)
         }
         .foregroundStyle(statusColor)
         .help("\(status.statusLabel), \(status.levelPercent)%")
@@ -973,27 +1031,43 @@ private struct BatteryStatusBadge: View {
 
 private struct USBTransferDeviceRow: View {
     let device: USBTransferDevice
+    let isSelected: Bool
+    let onSelect: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: device.isReady ? "checkmark.circle.fill" : "clock")
-                .foregroundStyle(device.isReady ? adaptiveSuccessColor : .secondary)
+        HStack(spacing: 8) {
+            Image(systemName: "iphone")
+                .frame(width: 18)
+                .foregroundStyle(device.isReady ? .primary : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                Text(device.statusLabel)
+                Text("USB · \(device.statusLabel)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Spacer(minLength: 4)
+            Image(systemName: "cable.connector")
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
         }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(colorScheme == .dark ? 0.22 : 0.14))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .help(device.subtitle)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var adaptiveSuccessColor: Color {
-        colorScheme == .light ? Color(red: 0.0, green: 0.45, blue: 0.20) : .green
-    }
 }
 
 private struct StorageRow: View {
@@ -2871,10 +2945,12 @@ private struct QRCodeImage: View {
 
 private struct AppToolbar: ToolbarContent {
     @ObservedObject var model: AppModel
+    @ObservedObject private var settings: AppSettings
     @ObservedObject private var usbTransferManager: USBTransferManager
 
     init(model: AppModel) {
         self.model = model
+        self.settings = model.settings
         self.usbTransferManager = model.usbTransferManager
     }
 
@@ -2918,14 +2994,16 @@ private struct AppToolbar: ToolbarContent {
                 .accessibilityHint("Refresh the files shown through File Transfer.")
                 .toolbarHoverHelp("Refresh: reload the files currently shown by File Transfer.")
             } else {
-                Button {
-                    model.navigateUp()
-                } label: {
-                    Label("Up", systemImage: "chevron.up")
+                if model.isActiveFileModeSelected {
+                    Button {
+                        model.navigateUp()
+                    } label: {
+                        Label("Up", systemImage: "chevron.up")
+                    }
+                    .accessibilityLabel("Go Up")
+                    .accessibilityHint("Go to the parent folder.")
+                    .toolbarHoverHelp("Go Up: open the parent folder.")
                 }
-                .accessibilityLabel("Go Up")
-                .accessibilityHint("Go to the parent folder.")
-                .toolbarHoverHelp("Go Up: open the parent folder.")
 
                 Button {
                     Task { await model.refreshCurrentSurfaceSafely() }
@@ -2940,52 +3018,51 @@ private struct AppToolbar: ToolbarContent {
 
         ToolbarItemGroup(placement: .primaryAction) {
             if model.isUSBTransferSelected {
-                Button {
-                    usbTransferManager.uploadToCurrentMTPFolder()
-                } label: {
-                    Label("Upload", systemImage: "square.and.arrow.up")
-                }
-                .disabled(!usbTransferManager.canWriteCurrentMTPFolder)
-                .accessibilityLabel("Upload")
-                .toolbarHoverHelp("Upload: copy files or folders from this Mac into the current phone folder.")
-
-                Button {
-                    usbTransferManager.downloadSelected()
-                } label: {
-                    Label("Download", systemImage: "square.and.arrow.down")
-                }
-                .disabled(usbTransferManager.selectedDownloadableItems.isEmpty)
-                .accessibilityLabel("Download")
-                .toolbarHoverHelp("Download: copy the selected File Transfer items to this Mac.")
-
-                Button {
-                    usbTransferManager.requestMTPNewFolder()
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
-                }
-                .disabled(!usbTransferManager.canWriteCurrentMTPFolder)
-                .accessibilityLabel("New Folder")
-                .toolbarHoverHelp("New Folder: create a folder in the current phone folder.")
-
-                Button {
-                    usbTransferManager.requestMTPCompressSelected()
-                } label: {
-                    Label("Compress", systemImage: "doc.zipper")
-                }
-                .disabled(!usbTransferManager.canCompressSelectedMTPItems)
-                .accessibilityLabel("Compress")
-                .toolbarHoverHelp("Compress: create a zip archive from the selected files or folders.")
-
-                Button {
-                    if let archive = usbTransferManager.selectedMTPExtractableArchive {
-                        usbTransferManager.confirmAndExtractMTPArchive(archive)
+                if settings.showUploadToolbarButton {
+                    Button {
+                        usbTransferManager.uploadToCurrentMTPFolder()
+                    } label: {
+                        Label("Upload", systemImage: "square.and.arrow.up")
                     }
-                } label: {
-                    Label("Uncompress", systemImage: "archivebox")
+                    .disabled(!usbTransferManager.canWriteCurrentMTPFolder)
+                    .accessibilityLabel("Upload")
+                    .toolbarHoverHelp("Upload: copy files or folders from this Mac into the current phone folder.")
                 }
-                .disabled(usbTransferManager.selectedMTPExtractableArchive == nil)
-                .accessibilityLabel("Uncompress")
-                .toolbarHoverHelp("Uncompress: extract the selected archive into a folder next to it.")
+
+                if settings.showDownloadToolbarButton {
+                    Button {
+                        usbTransferManager.downloadSelected()
+                    } label: {
+                        Label("Download", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(usbTransferManager.selectedDownloadableItems.isEmpty)
+                    .accessibilityLabel("Download")
+                    .toolbarHoverHelp("Download: copy the selected File Transfer items to this Mac.")
+                }
+
+                if settings.showCompressToolbarButton {
+                    Button {
+                        usbTransferManager.requestMTPCompressSelected()
+                    } label: {
+                        Label("Compress", systemImage: "doc.zipper")
+                    }
+                    .disabled(!usbTransferManager.canCompressSelectedMTPItems)
+                    .accessibilityLabel("Compress")
+                    .toolbarHoverHelp("Compress: create a zip archive from the selected files or folders.")
+                }
+
+                if settings.showUncompressToolbarButton {
+                    Button {
+                        if let archive = usbTransferManager.selectedMTPExtractableArchive {
+                            usbTransferManager.confirmAndExtractMTPArchive(archive)
+                        }
+                    } label: {
+                        Label("Uncompress", systemImage: "archivebox")
+                    }
+                    .disabled(usbTransferManager.selectedMTPExtractableArchive == nil)
+                    .accessibilityLabel("Uncompress")
+                    .toolbarHoverHelp("Uncompress: extract the selected archive into a folder next to it.")
+                }
 
                 Button(role: .destructive) {
                     usbTransferManager.deleteSelectedMTPItems()
@@ -2995,66 +3072,67 @@ private struct AppToolbar: ToolbarContent {
                 .disabled(!usbTransferManager.canDeleteSelectedMTPItems)
                 .accessibilityLabel("Delete Permanently")
                 .toolbarHoverHelp("Delete: permanently remove the selected File Transfer items from the phone.")
-            } else if model.hasReadyADBDevice {
-                Button {
-                    model.beginUpload()
-                } label: {
-                    Label("Upload", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityLabel("Upload")
-                .accessibilityHint("Upload files from this Mac to the current Android folder.")
-                .toolbarHoverHelp("Upload: copy files from this Mac into the current Android folder.")
-
-                Button {
-                    Task { await model.downloadSelected() }
-                } label: {
-                    Label("Download", systemImage: "square.and.arrow.down")
-                }
-                .disabled(model.selectedFiles.isEmpty)
-                .accessibilityLabel("Download")
-                .accessibilityHint("Download the selected Android files to this Mac.")
-                .toolbarHoverHelp("Download: copy the selected Android files to this Mac.")
-
-                Button {
-                    model.requestBatchRenameSelected()
-                } label: {
-                    Label("Batch Rename", systemImage: "textformat")
-                }
-                .disabled(model.selectedFiles.count < 2)
-                .accessibilityLabel("Batch Rename")
-                .accessibilityHint("Rename multiple selected Android files.")
-                .toolbarHoverHelp("Batch Rename: rename selected files with find and replace, numbering, prefixes, suffixes, or extension changes.")
-
-                Button {
-                    model.requestNewFolder()
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
-                }
-                .accessibilityLabel("New Folder")
-                .accessibilityHint("Create a new folder in the current Android folder.")
-                .toolbarHoverHelp("New Folder: create a folder in the current Android location.")
-
-                Button {
-                    model.requestCompressSelected()
-                } label: {
-                    Label("Compress", systemImage: "doc.zipper")
-                }
-                .disabled(!model.canCompressSelection)
-                .accessibilityLabel("Compress")
-                .accessibilityHint("Compress the selected Android files into a zip archive.")
-                .toolbarHoverHelp("Compress: create a zip archive from the selected files or folders.")
-
-                Button {
-                    if let archive = model.selectedExtractableArchive {
-                        model.confirmAndExtractArchive(archive)
+            } else if model.isActiveFileModeSelected {
+                if settings.showUploadToolbarButton {
+                    Button {
+                        model.beginUpload()
+                    } label: {
+                        Label("Upload", systemImage: "square.and.arrow.up")
                     }
-                } label: {
-                    Label("Uncompress", systemImage: "archivebox")
+                    .accessibilityLabel("Upload")
+                    .accessibilityHint("Upload files from this Mac to the current Android folder.")
+                    .toolbarHoverHelp("Upload: copy files from this Mac into the current Android folder.")
                 }
-                .disabled(model.selectedExtractableArchive == nil)
-                .accessibilityLabel("Uncompress")
-                .accessibilityHint("Extract the selected archive into a folder on the Android device.")
-                .toolbarHoverHelp("Uncompress: extract the selected archive into a folder next to it.")
+
+                if settings.showDownloadToolbarButton {
+                    Button {
+                        Task { await model.downloadSelected() }
+                    } label: {
+                        Label("Download", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(model.selectedFiles.isEmpty)
+                    .accessibilityLabel("Download")
+                    .accessibilityHint("Download the selected Android files to this Mac.")
+                    .toolbarHoverHelp("Download: copy the selected Android files to this Mac.")
+                }
+
+                if settings.showBatchRenameToolbarButton {
+                    Button {
+                        model.requestBatchRenameSelected()
+                    } label: {
+                        Label("Batch Rename", systemImage: "textformat")
+                    }
+                    .disabled(model.selectedFiles.count < 2)
+                    .accessibilityLabel("Batch Rename")
+                    .accessibilityHint("Rename multiple selected Android files.")
+                    .toolbarHoverHelp("Batch Rename: rename selected files with find and replace, numbering, prefixes, suffixes, or extension changes.")
+                }
+
+                if settings.showCompressToolbarButton {
+                    Button {
+                        model.requestCompressSelected()
+                    } label: {
+                        Label("Compress", systemImage: "doc.zipper")
+                    }
+                    .disabled(!model.canCompressSelection)
+                    .accessibilityLabel("Compress")
+                    .accessibilityHint("Compress the selected Android files into a zip archive.")
+                    .toolbarHoverHelp("Compress: create a zip archive from the selected files or folders.")
+                }
+
+                if settings.showUncompressToolbarButton {
+                    Button {
+                        if let archive = model.selectedExtractableArchive {
+                            model.confirmAndExtractArchive(archive)
+                        }
+                    } label: {
+                        Label("Uncompress", systemImage: "archivebox")
+                    }
+                    .disabled(model.selectedExtractableArchive == nil)
+                    .accessibilityLabel("Uncompress")
+                    .accessibilityHint("Extract the selected archive into a folder on the Android device.")
+                    .toolbarHoverHelp("Uncompress: extract the selected archive into a folder next to it.")
+                }
 
                 Button {
                     Task { await model.deleteSelectedToTrash() }
@@ -3069,15 +3147,56 @@ private struct AppToolbar: ToolbarContent {
         }
 
         ToolbarItemGroup {
-            Button {
-                model.showConnectionStatus()
-            } label: {
-                Label("Connection Status", systemImage: "cable.connector")
-            }
-            .accessibilityLabel("Connection Status")
-            .accessibilityHint("Show Developer Options and File Transfer status.")
-            .toolbarHoverHelp("Connection Status: check both connection methods and see setup help.")
+            if model.showsAppManagementToolbarControls {
+                Button {
+                    model.showAPKImporter = true
+                } label: {
+                    Label("Install Package…", systemImage: "plus.app")
+                }
+                .disabled(model.isAppPackageInstallInProgress)
+                .accessibilityLabel("Install App Package")
+                .accessibilityIdentifier("toolbar-install-app")
+                .accessibilityHint("Choose an Android app package on this Mac and install it on the Android device.")
+                .toolbarHoverHelp("Install Package: choose an APK, XAPK, APKS, or split ZIP on this Mac.")
 
+                Button {
+                    Task { await model.forceStopSelectedPackages() }
+                } label: {
+                    Label("Force Close", systemImage: "xmark.octagon")
+                }
+                .disabled(model.selectedPackageIDs.isEmpty)
+                .accessibilityLabel("Force Close Apps")
+                .accessibilityIdentifier("toolbar-force-close-apps")
+                .accessibilityHint("Stop the selected running apps on the Android device.")
+                .toolbarHoverHelp("Force Close: stop the selected running apps on the Android device.")
+
+                Button(role: .destructive) {
+                    Task { await model.uninstallSelectedPackages() }
+                } label: {
+                    Label("Uninstall", systemImage: "trash")
+                }
+                .disabled(model.selectedPackageIDs.isEmpty)
+                .accessibilityLabel("Uninstall Apps")
+                .accessibilityIdentifier("toolbar-uninstall-apps")
+                .accessibilityHint("Uninstall the selected Android apps.")
+                .toolbarHoverHelp("Uninstall: remove the selected apps from the Android device.")
+            }
+        }
+
+        ToolbarItemGroup {
+            if settings.showConnectionStatusToolbarButton {
+                Button {
+                    model.showConnectionStatus()
+                } label: {
+                    Label("Connection Status", systemImage: "cable.connector")
+                }
+                .accessibilityLabel("Connection Status")
+                .accessibilityHint("Show Developer Options and File Transfer status.")
+                .toolbarHoverHelp("Connection Status: check both connection methods and see setup help.")
+            }
+        }
+
+        ToolbarItemGroup {
             if model.isActiveFileModeSelected {
                 Picker("Layout", selection: $model.browserLayout) {
                     ForEach(BrowserLayout.allCases) { layout in
@@ -3090,7 +3209,39 @@ private struct AppToolbar: ToolbarContent {
                 .accessibilityLabel("File Layout")
                 .accessibilityHint("Switch between list and icon file layouts.")
             }
+        }
 
+        ToolbarItemGroup {
+            if model.hasInspectableDeviceSurface {
+                if model.showsNewFolderToolbarControl {
+                    Button {
+                        model.requestActiveFileModeNewFolder()
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(!model.canCreateFolderInActiveFileMode)
+                    .accessibilityLabel("New Folder")
+                    .accessibilityIdentifier("toolbar-new-folder")
+                    .accessibilityHint("Create a folder in the current Android file location.")
+                    .toolbarHoverHelp("New Folder: create a folder in the current Android file location.")
+                }
+
+                Button {
+                    model.showInspector.toggle()
+                } label: {
+                    Label(
+                        model.showInspector ? "Hide Inspector" : "Show Inspector",
+                        systemImage: "sidebar.right"
+                    )
+                }
+                .accessibilityLabel(model.showInspector ? "Hide Inspector" : "Show Inspector")
+                .accessibilityIdentifier("toolbar-inspector")
+                .accessibilityHint("Show or hide the details panel on the right side of the window.")
+                .toolbarHoverHelp(model.showInspector ? "Inspector: hide the details panel on the right." : "Inspector: show details for the selected file, preview, or app.")
+            }
+        }
+
+        ToolbarItemGroup {
             if model.showsPhoneCaptureToolbarControls {
                 Button {
                     model.requestScreenshot()
@@ -3150,17 +3301,6 @@ private struct AppToolbar: ToolbarContent {
                 }
             }
 
-            if model.hasInspectableDeviceSurface {
-                Button {
-                    model.showInspector.toggle()
-                } label: {
-                    Label("Inspector", systemImage: "sidebar.right")
-                }
-                .accessibilityLabel(model.showInspector ? "Hide Inspector" : "Show Inspector")
-                .accessibilityIdentifier("toolbar-inspector")
-                .accessibilityHint("Show or hide the details panel on the right side of the window.")
-                .toolbarHoverHelp(model.showInspector ? "Inspector: hide the details panel on the right." : "Inspector: show details for the selected file, preview, or app.")
-            }
         }
     }
 }
