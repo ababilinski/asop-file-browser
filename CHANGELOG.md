@@ -6,6 +6,19 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-07
+
+### New features
+
+- Show progress for direct app installs ([#24](https://github.com/ababilinski/asop-file-browser/pull/24))
+- Unify device connections and tool setup ([#27](https://github.com/ababilinski/asop-file-browser/pull/27))
+- Add multi-source audio to screen recordings ([#30](https://github.com/ababilinski/asop-file-browser/pull/30))
+
+### Fixes and improvements
+
+- Protect Trash records by device ([#28](https://github.com/ababilinski/asop-file-browser/pull/28))
+- Polish selection search and storage analysis ([#29](https://github.com/ababilinski/asop-file-browser/pull/29))
+
 ## [1.2.0] - 2026-07-25
 
 ### New features
@@ -70,7 +83,8 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 - Guarded release automation with build, test, signing, notarization, and launch
   checks before publication.
 
-[Unreleased]: https://github.com/ababilinski/asop-file-browser/compare/1.2.0...HEAD
+[Unreleased]: https://github.com/ababilinski/asop-file-browser/compare/1.3.0...HEAD
+[1.3.0]: https://github.com/ababilinski/asop-file-browser/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/ababilinski/asop-file-browser/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/ababilinski/asop-file-browser/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/ababilinski/asop-file-browser/releases/tag/1.0.0
